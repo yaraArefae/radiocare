@@ -1,9 +1,10 @@
 "use client";
 
 import {
-  ChangeEvent,
-  DragEvent,
-  FormEvent,
+  type ChangeEvent,
+  type DragEvent,
+  type FormEvent,
+  type ReactNode,
   useEffect,
   useState,
 } from "react";
@@ -28,6 +29,13 @@ type FormDataState = {
   clinicalNotes: string;
 };
 
+type ClassificationResponse = {
+  success?: boolean;
+  message?: string;
+  bodyRegion?: string | null;
+  confidence?: number | null;
+};
+
 const initialFormData: FormDataState = {
   patientId: "",
   patientName: "",
@@ -45,6 +53,7 @@ const imagingViews: Record<string, string[]> = {
     "Cervical AP",
     "Cervical Lateral",
     "Thoracic AP",
+    "Thoracic Lateral",
     "Lumbar AP",
     "Lumbar Lateral",
   ],
@@ -81,6 +90,38 @@ export default function NewStudyPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  const [isClassifying, setIsClassifying] =
+    useState(false);
+
+  const [
+    classificationMessage,
+    setClassificationMessage,
+  ] = useState("");
+
+  const [detectedRegion, setDetectedRegion] =
+    useState<string | null>(null);
+
+  const [
+    detectedConfidence,
+    setDetectedConfidence,
+  ] = useState<number | null>(null);
+
+  const currentUser = session?.user as
+    | SessionUser
+    | undefined;
+
+  const userRoles = (
+    Array.isArray(currentUser?.role)
+      ? currentUser.role
+      : (currentUser?.role || "").split(",")
+  )
+    .map((role) => role.trim().toLowerCase())
+    .filter(Boolean);
+
+  const canCreateStudy =
+    userRoles.includes("admin") ||
+    userRoles.includes("technician");
+
   useEffect(() => {
     if (!isPending && !session) {
       router.replace("/");
@@ -88,11 +129,27 @@ export default function NewStudyPage() {
   }, [isPending, session, router]);
 
   useEffect(() => {
+    if (
+      !isPending &&
+      session &&
+      !canCreateStudy
+    ) {
+      router.replace("/unauthorized");
+    }
+  }, [
+    isPending,
+    session,
+    canCreateStudy,
+    router,
+  ]);
+
+  useEffect(() => {
     const parameters = new URLSearchParams(
       window.location.search
     );
 
-    const patientFromUrl = parameters.get("patient");
+    const patientFromUrl =
+      parameters.get("patient");
 
     if (patientFromUrl) {
       setFormData((current) => ({
@@ -126,6 +183,94 @@ export default function NewStudyPage() {
     setSuccess("");
   }
 
+  async function classifySelectedImage(
+    file: File
+  ) {
+    setIsClassifying(true);
+    setClassificationMessage("");
+    setDetectedRegion(null);
+    setDetectedConfidence(null);
+
+    try {
+      const requestData = new FormData();
+
+      requestData.append("image", file);
+
+      const response = await fetch(
+        "/api/ai/classify",
+        {
+          method: "POST",
+          body: requestData,
+        }
+      );
+
+      const result =
+        (await response.json()) as ClassificationResponse;
+
+      if (!response.ok) {
+        throw new Error(
+          result.message ||
+            "The image could not be classified."
+        );
+      }
+
+      if (
+        typeof result.bodyRegion === "string" &&
+        result.bodyRegion.trim()
+      ) {
+        const returnedRegion =
+          result.bodyRegion.trim();
+
+        const matchedRegion =
+          Object.keys(imagingViews).find(
+            (region) =>
+              region.toLowerCase() ===
+              returnedRegion.toLowerCase()
+          ) || returnedRegion;
+
+        setDetectedRegion(matchedRegion);
+
+        setDetectedConfidence(
+          typeof result.confidence === "number"
+            ? result.confidence
+            : null
+        );
+
+        if (imagingViews[matchedRegion]) {
+          setFormData((current) => ({
+            ...current,
+            bodyRegion: matchedRegion,
+            imagingView: "",
+          }));
+        }
+
+        setClassificationMessage(
+          `The image was classified as ${matchedRegion}. Confirm or correct the result before saving.`
+        );
+
+        return;
+      }
+
+      setClassificationMessage(
+        result.message ||
+          "The AI service received the image successfully. The body-region model has not been trained yet."
+      );
+    } catch (classificationError) {
+      console.error(
+        "Image classification failed:",
+        classificationError
+      );
+
+      setClassificationMessage(
+        classificationError instanceof Error
+          ? classificationError.message
+          : "Unable to connect to the AI service."
+      );
+    } finally {
+      setIsClassifying(false);
+    }
+  }
+
   function processFile(file: File) {
     setError("");
     setSuccess("");
@@ -144,9 +289,8 @@ export default function NewStudyPage() {
       fileName.endsWith(".dcm") ||
       file.type === "application/dicom";
 
-    const isImage = allowedImageTypes.includes(
-      file.type
-    );
+    const isImage =
+      allowedImageTypes.includes(file.type);
 
     if (!isImage && !isDicom) {
       setError(
@@ -167,11 +311,20 @@ export default function NewStudyPage() {
     }
 
     setSelectedFile(file);
+    setDetectedRegion(null);
+    setDetectedConfidence(null);
+    setClassificationMessage("");
 
     if (isImage) {
       setPreviewUrl(URL.createObjectURL(file));
+
+      void classifySelectedImage(file);
     } else {
       setPreviewUrl("");
+
+      setClassificationMessage(
+        "The DICOM file was selected successfully. Automatic DICOM classification will be added later."
+      );
     }
   }
 
@@ -222,7 +375,10 @@ export default function NewStudyPage() {
     setSelectedFile(null);
     setPreviewUrl("");
     setError("");
-    setSuccess("");
+    setDetectedRegion(null);
+    setDetectedConfidence(null);
+    setClassificationMessage("");
+    setIsClassifying(false);
   }
 
   async function handleSubmit(
@@ -250,7 +406,7 @@ export default function NewStudyPage() {
     const numericAge = Number(formData.age);
 
     if (
-      Number.isNaN(numericAge) ||
+      !Number.isInteger(numericAge) ||
       numericAge < 0 ||
       numericAge > 120
     ) {
@@ -267,16 +423,96 @@ export default function NewStudyPage() {
       return;
     }
 
+    if (isClassifying) {
+      setError(
+        "Please wait until the AI Image Router finishes checking the image."
+      );
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
-      await new Promise((resolve) =>
-        setTimeout(resolve, 1200)
+      const requestData = new FormData();
+
+      requestData.append(
+        "patientId",
+        formData.patientId.trim()
       );
 
-      setSuccess(
-        "The study information is ready. AI analysis will be connected when the analysis API is added."
+      requestData.append(
+        "patientName",
+        formData.patientName.trim()
       );
+
+      requestData.append("age", formData.age);
+      requestData.append(
+        "gender",
+        formData.gender
+      );
+
+      requestData.append(
+        "bodyRegion",
+        formData.bodyRegion
+      );
+
+      requestData.append(
+        "imagingView",
+        formData.imagingView
+      );
+
+      requestData.append(
+        "priority",
+        formData.priority
+      );
+
+      requestData.append(
+        "clinicalNotes",
+        formData.clinicalNotes.trim()
+      );
+
+      requestData.append(
+        "image",
+        selectedFile
+      );
+
+      if (detectedRegion) {
+        requestData.append(
+          "detectedRegion",
+          detectedRegion
+        );
+      }
+
+      if (detectedConfidence !== null) {
+        requestData.append(
+          "detectedConfidence",
+          String(detectedConfidence)
+        );
+      }
+
+      const response = await fetch(
+        "/api/studies",
+        {
+          method: "POST",
+          body: requestData,
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.message ||
+            "The study could not be saved."
+        );
+      }
+
+      setSuccess(
+        `Study ${result.study.id} was saved successfully.`
+      );
+
+      setFormData(initialFormData);
+      removeFile();
     } catch (submissionError) {
       console.error(
         "Study submission failed:",
@@ -284,7 +520,9 @@ export default function NewStudyPage() {
       );
 
       setError(
-        "Unable to prepare the study. Please try again."
+        submissionError instanceof Error
+          ? submissionError.message
+          : "Unable to save the study."
       );
     } finally {
       setIsSubmitting(false);
@@ -296,44 +534,20 @@ export default function NewStudyPage() {
       await authClient.signOut();
       window.location.replace("/");
     } catch (logoutError) {
-      console.error("Logout failed:", logoutError);
+      console.error(
+        "Logout failed:",
+        logoutError
+      );
     }
   }
 
   if (isPending) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-blue-950">
-        <div className="text-center">
-          <div className="mx-auto h-11 w-11 animate-spin rounded-full border-4 border-cyan-300/20 border-t-cyan-300" />
-
-          <p className="mt-4 font-semibold text-cyan-100">
-            Loading new study...
-          </p>
-        </div>
-      </main>
+      <LoadingPage message="Loading new study..." />
     );
   }
 
-  if (!session) {
-    return null;
-  }
-
-  const currentUser = session.user as SessionUser;
-
-  const userRoles = (
-    Array.isArray(currentUser.role)
-      ? currentUser.role
-      : (currentUser.role || "").split(",")
-  )
-    .map((role) => role.trim().toLowerCase())
-    .filter(Boolean);
-
-  const canCreateStudy =
-    userRoles.includes("admin") ||
-    userRoles.includes("technician");
-
-  if (!canCreateStudy) {
-    router.replace("/unauthorized");
+  if (!session || !canCreateStudy) {
     return null;
   }
 
@@ -341,7 +555,9 @@ export default function NewStudyPage() {
     imagingViews[formData.bodyRegion] || [];
 
   const isDicomFile =
-    selectedFile?.name.toLowerCase().endsWith(".dcm") ||
+    selectedFile?.name
+      .toLowerCase()
+      .endsWith(".dcm") ||
     selectedFile?.type === "application/dicom";
 
   return (
@@ -360,7 +576,9 @@ export default function NewStudyPage() {
         <div className="mx-auto flex max-w-[1700px] items-center justify-between px-5 py-4 sm:px-7">
           <button
             type="button"
-            onClick={() => router.push("/dashboard")}
+            onClick={() =>
+              router.push("/dashboard")
+            }
             className="flex items-center gap-3 text-left"
           >
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/25 bg-white/10 font-bold text-white shadow-lg backdrop-blur-xl">
@@ -381,7 +599,7 @@ export default function NewStudyPage() {
           <div className="flex items-center gap-3">
             <div className="hidden text-right sm:block">
               <p className="text-sm font-semibold text-white">
-                {currentUser.name}
+                {currentUser?.name}
               </p>
 
               <p className="text-xs text-cyan-300">
@@ -391,7 +609,9 @@ export default function NewStudyPage() {
 
             <button
               type="button"
-              onClick={() => router.push("/dashboard")}
+              onClick={() =>
+                router.push("/dashboard")
+              }
               className="rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white backdrop-blur-xl transition hover:bg-white/15"
             >
               Dashboard
@@ -462,14 +682,14 @@ export default function NewStudyPage() {
               <span className="h-3 w-3 rounded-full bg-green-400 shadow-[0_0_15px_rgba(74,222,128,0.8)]" />
 
               <span className="text-sm text-green-100">
-                Models operational
+                Service connected
               </span>
             </div>
 
             <div className="mt-5 space-y-2 text-xs text-slate-300">
-              <p>Image router: Active</p>
-              <p>General X-ray model: Active</p>
-              <p>Dental model: Active</p>
+              <p>Image upload: Active</p>
+              <p>Image router API: Connected</p>
+              <p>Classification model: Pending training</p>
             </div>
           </div>
         </aside>
@@ -486,9 +706,8 @@ export default function NewStudyPage() {
             </h2>
 
             <p className="mt-3 max-w-3xl text-slate-300">
-              Enter the patient information, select the
-              imaging details and upload the X-ray image for
-              AI-assisted analysis.
+              Enter the patient information, upload the
+              X-ray image and confirm its imaging details.
             </p>
           </div>
 
@@ -609,7 +828,7 @@ export default function NewStudyPage() {
                 <CardHeading
                   number="2"
                   title="Study Information"
-                  description="Select the body region and imaging view."
+                  description="Confirm the body region and imaging view."
                 />
 
                 <div className="mt-6 grid gap-5 sm:grid-cols-2">
@@ -655,7 +874,9 @@ export default function NewStudyPage() {
                     <select
                       id="imagingView"
                       required
-                      disabled={!formData.bodyRegion}
+                      disabled={
+                        !formData.bodyRegion
+                      }
                       value={formData.imagingView}
                       onChange={(event) =>
                         updateField(
@@ -715,7 +936,9 @@ export default function NewStudyPage() {
                       <textarea
                         id="clinicalNotes"
                         rows={4}
-                        value={formData.clinicalNotes}
+                        value={
+                          formData.clinicalNotes
+                        }
                         onChange={(event) =>
                           updateField(
                             "clinicalNotes",
@@ -737,7 +960,7 @@ export default function NewStudyPage() {
                 <CardHeading
                   number="3"
                   title="Upload X-ray Image"
-                  description="Upload the medical image that will be analyzed."
+                  description="Upload the image for automatic body-region checking."
                 />
 
                 {!selectedFile ? (
@@ -774,8 +997,8 @@ export default function NewStudyPage() {
                     </p>
 
                     <p className="mt-4 text-xs text-slate-400">
-                      JPG, PNG, WEBP or DICOM — maximum size
-                      20 MB
+                      JPG, PNG, WEBP or DICOM — maximum
+                      size 20 MB
                     </p>
                   </label>
                 ) : (
@@ -785,7 +1008,7 @@ export default function NewStudyPage() {
                         <img
                           src={previewUrl}
                           alt="Selected X-ray preview"
-                          className="h-full max-h-[360px] w-full object-contain"
+                          className="h-full max-h-[420px] w-full object-contain"
                         />
                       ) : (
                         <div className="p-8 text-center">
@@ -798,7 +1021,8 @@ export default function NewStudyPage() {
                           </p>
 
                           <p className="mt-2 text-sm text-slate-400">
-                            Browser preview is not available.
+                            Browser preview is not
+                            available.
                           </p>
                         </div>
                       )}
@@ -832,11 +1056,78 @@ export default function NewStudyPage() {
                         />
                       </div>
 
+                      {/* Image Router */}
+                      <div className="mt-6 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-5 backdrop-blur-xl">
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <p className="text-sm font-bold text-white">
+                              AI Image Router
+                            </p>
+
+                            <p className="mt-1 text-xs leading-5 text-slate-300">
+                              Checks the uploaded image
+                              and detects its body region.
+                            </p>
+                          </div>
+
+                          {isClassifying && (
+                            <div className="h-7 w-7 shrink-0 animate-spin rounded-full border-4 border-cyan-300/20 border-t-cyan-300" />
+                          )}
+                        </div>
+
+                        {isClassifying && (
+                          <p className="mt-4 text-sm font-semibold text-cyan-100">
+                            Analyzing the image...
+                          </p>
+                        )}
+
+                        {!isClassifying &&
+                          classificationMessage && (
+                            <p className="mt-4 text-sm leading-6 text-cyan-50">
+                              {
+                                classificationMessage
+                              }
+                            </p>
+                          )}
+
+                        {!isClassifying &&
+                          detectedRegion && (
+                            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                              <FileInfo
+                                label="Detected region"
+                                value={detectedRegion}
+                              />
+
+                              <FileInfo
+                                label="Confidence"
+                                value={
+                                  detectedConfidence ===
+                                  null
+                                    ? "Not available"
+                                    : `${detectedConfidence.toFixed(
+                                        1
+                                      )}%`
+                                }
+                              />
+                            </div>
+                          )}
+
+                        <p className="mt-4 text-xs leading-5 text-slate-400">
+                          Confirm or correct the body
+                          region and imaging view before
+                          saving the study.
+                        </p>
+                      </div>
+
                       <button
                         type="button"
-                        onClick={removeFile}
+                        onClick={() => {
+                          removeFile();
+                          setSuccess("");
+                        }}
                         className="mt-6 w-fit rounded-xl border border-red-300/25 bg-red-500/15 px-5 py-3 font-semibold text-red-100 transition hover:bg-red-500/25"
                       >
+                        
                         Remove file
                       </button>
                     </div>
@@ -866,31 +1157,42 @@ export default function NewStudyPage() {
             <div className="mt-7 flex flex-col justify-end gap-4 sm:flex-row">
               <button
                 type="button"
-                disabled={isSubmitting}
-                onClick={() => router.push("/studies")}
-                className="rounded-xl border border-white/20 bg-white/10 px-7 py-3.5 font-semibold text-white backdrop-blur-xl transition hover:bg-white/15 disabled:opacity-60"
+                disabled={
+                  isSubmitting ||
+                  isClassifying
+                }
+                onClick={() =>
+                  router.push("/studies")
+                }
+                className="rounded-xl border border-white/20 bg-white/10 px-7 py-3.5 font-semibold text-white backdrop-blur-xl transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Cancel
               </button>
 
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={
+                  isSubmitting ||
+                  isClassifying
+                }
                 className="rounded-xl border border-cyan-300/20 bg-gradient-to-r from-blue-600 to-cyan-500 px-8 py-3.5 font-semibold text-white shadow-[0_14px_40px_rgba(14,116,255,0.3)] transition hover:-translate-y-0.5 hover:from-blue-500 hover:to-cyan-400 disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
               >
-                {isSubmitting
-                  ? "Preparing analysis..."
-                  : "Analyze X-ray"}
+                {isClassifying
+                  ? "Checking image..."
+                  : isSubmitting
+                    ? "Saving study..."
+                    : "Save and Analyze"}
               </button>
             </div>
           </form>
 
           <div className="mt-8 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-5 backdrop-blur-xl">
             <p className="text-sm leading-6 text-cyan-50">
-              AI findings are provided for decision-support
-              purposes only. Final interpretation and
-              diagnosis must be completed by an authorized
-              medical professional.
+              AI findings are provided for
+              decision-support purposes only. Final
+              interpretation and diagnosis must be
+              completed by an authorized medical
+              professional.
             </p>
           </div>
         </section>
@@ -905,11 +1207,33 @@ const inputClasses =
 const selectClasses =
   "w-full rounded-xl border border-white/20 bg-blue-950/70 px-4 py-3.5 text-white outline-none transition focus:border-cyan-300 focus:ring-4 focus:ring-cyan-300/10";
 
-type GlassCardProps = {
-  children: React.ReactNode;
+type LoadingPageProps = {
+  message: string;
 };
 
-function GlassCard({ children }: GlassCardProps) {
+function LoadingPage({
+  message,
+}: LoadingPageProps) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-blue-950">
+      <div className="text-center">
+        <div className="mx-auto h-11 w-11 animate-spin rounded-full border-4 border-cyan-300/20 border-t-cyan-300" />
+
+        <p className="mt-4 font-semibold text-cyan-100">
+          {message}
+        </p>
+      </div>
+    </main>
+  );
+}
+
+type GlassCardProps = {
+  children: ReactNode;
+};
+
+function GlassCard({
+  children,
+}: GlassCardProps) {
   return (
     <section className="rounded-2xl border border-white/15 bg-white/10 p-6 shadow-[0_22px_65px_rgba(0,0,0,0.22)] backdrop-blur-2xl sm:p-7">
       {children}
@@ -951,7 +1275,7 @@ type FormFieldProps = {
   id: string;
   label: string;
   required?: boolean;
-  children: React.ReactNode;
+  children: ReactNode;
 };
 
 function FormField({
@@ -969,7 +1293,9 @@ function FormField({
         {label}
 
         {required && (
-          <span className="ml-1 text-red-300">*</span>
+          <span className="ml-1 text-red-300">
+            *
+          </span>
         )}
       </label>
 
@@ -1032,10 +1358,13 @@ function formatFileSize(bytes: number) {
   }
 
   if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1024).toFixed(
+      1
+    )} KB`;
   }
 
-  return `${(bytes / (1024 * 1024)).toFixed(
-    1
-  )} MB`;
+  return `${(
+    bytes /
+    (1024 * 1024)
+  ).toFixed(1)} MB`;
 }

@@ -39,3 +39,30 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+
+# Database files
+radiology-auth.db
+radiology-auth.db-shm
+radiology-auth.db-wal
+
+# Uploaded medical images
+storage/
+
+# Python AI service
+ai-service/.venv/
+ai-service/__pycache__/
+ai-service/app/__pycache__/
+ai-service/**/*.pyc
+
+# Training data and trained models
+ai-service/data/
+ai-service/models/*.pth
+ai-service/models/*.pt
+
+# Next.js
+node_modules/
+.next/
