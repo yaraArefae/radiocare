@@ -6,7 +6,7 @@ from PIL import Image, UnidentifiedImageError
 
 
 app = FastAPI(
-    title="RadiologyInsight AI Service",
+    title="RadioCare Service",
     version="1.0.0",
 )
 
@@ -37,7 +37,7 @@ MAX_FILE_SIZE = 20 * 1024 * 1024
 def root():
     return {
         "success": True,
-        "message": "RadiologyInsight AI service is running.",
+        "message": "RadioCare service is running.",
     }
 
 

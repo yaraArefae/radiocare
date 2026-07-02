@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 
 import { authClient } from "@/lib/auth-client";
@@ -164,6 +165,7 @@ export default function WaitingReviewPage() {
 
   const canReview =
     userRoles.includes("admin") ||
+    userRoles.includes("doctor") ||
     userRoles.includes("radiologist");
 
   if (!canReview) {
@@ -197,20 +199,16 @@ export default function WaitingReviewPage() {
           <button
             type="button"
             onClick={() => router.push("/dashboard")}
-            className="flex items-center gap-3 text-left"
+            className="flex items-center text-left"
           >
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/25 bg-white/10 font-bold shadow-lg backdrop-blur-xl">
-              RI
-            </div>
-
-            <div>
-              <h1 className="font-bold text-white">
-                RadiologyInsight AI
-              </h1>
-
-              <p className="text-xs text-slate-300">
-                Intelligent Medical Imaging Platform
-              </p>
+            <div className="flex h-12 w-12 overflow-hidden rounded-[18px] border border-white/25 bg-white/10 shadow-lg backdrop-blur-xl">
+              <Image
+                src="/images/radiocare-icon.png"
+                alt="RadioCare logo"
+                width={48}
+                height={48}
+                className="h-full w-full object-contain p-1"
+              />
             </div>
           </button>
 
@@ -258,7 +256,7 @@ export default function WaitingReviewPage() {
           <StatisticCard
             title="Waiting Studies"
             value={String(reviewStudies.length)}
-            description="Require radiologist review"
+            description="Require doctor review"
           />
 
           <StatisticCard
@@ -454,7 +452,7 @@ export default function WaitingReviewPage() {
           <p className="text-sm leading-6 text-cyan-50">
             AI findings are decision-support information only.
             The final interpretation and diagnosis must be
-            completed by an authorized radiologist.
+            completed by an authorized doctor.
           </p>
         </div>
       </section>

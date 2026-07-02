@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -82,8 +83,14 @@ export default function SetupPage() {
         onSubmit={handleSubmit}
         className="relative z-10 w-full max-w-lg rounded-[30px] border border-white/15 bg-white/10 p-8 shadow-[0_30px_90px_rgba(0,0,0,0.38)] backdrop-blur-2xl sm:p-10"
       >
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/25 bg-white/10 text-lg font-bold text-white shadow-lg backdrop-blur-xl">
-          RI
+        <div className="flex h-14 w-14 overflow-hidden rounded-[18px] border border-white/25 bg-white/10 shadow-lg backdrop-blur-xl">
+          <Image
+            src="/images/radiocare-icon.png"
+            alt="RadioCare logo"
+            width={56}
+            height={56}
+            className="h-full w-full object-contain p-1"
+          />
         </div>
 
         <p className="mt-7 font-semibold text-cyan-300">
@@ -96,7 +103,7 @@ export default function SetupPage() {
 
         <p className="mt-3 text-sm leading-6 text-slate-300">
           Create the first administrator account for
-          RadiologyInsight AI.
+          RadioCare.
         </p>
 
         <div className="mt-8 space-y-5">

@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -179,8 +180,14 @@ export default function ChangePasswordPage() {
   return (
     <GlassBackground maxWidth="max-w-lg">
       <div className="flex items-center justify-between gap-5">
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/25 bg-white/10 text-lg font-bold text-white shadow-lg backdrop-blur-xl">
-          RI
+        <div className="flex h-14 w-14 overflow-hidden rounded-[18px] border border-white/25 bg-white/10 shadow-lg backdrop-blur-xl">
+          <Image
+            src="/images/radiocare-icon.png"
+            alt="RadioCare logo"
+            width={56}
+            height={56}
+            className="h-full w-full object-contain p-1"
+          />
         </div>
 
         <Link

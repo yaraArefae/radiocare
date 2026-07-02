@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { FormEvent, useState } from "react";
 
@@ -76,8 +77,14 @@ export default function ForgotPasswordPage() {
       {/* Glass card */}
       <section className="relative z-10 w-full max-w-md rounded-[30px] border border-white/15 bg-white/10 p-8 shadow-[0_30px_90px_rgba(0,0,0,0.38)] backdrop-blur-2xl sm:p-10">
         {/* Logo */}
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/25 bg-white/10 text-lg font-bold text-white shadow-lg backdrop-blur-xl">
-          RI
+        <div className="flex h-14 w-14 overflow-hidden rounded-[18px] border border-white/25 bg-white/10 shadow-lg backdrop-blur-xl">
+          <Image
+            src="/images/radiocare-icon.png"
+            alt="RadioCare logo"
+            width={56}
+            height={56}
+            className="h-full w-full object-contain p-1"
+          />
         </div>
 
         {/* Heading */}

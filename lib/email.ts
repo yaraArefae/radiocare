@@ -47,16 +47,16 @@ export async function sendPasswordResetEmail({
   await transporter.sendMail({
     from:
       process.env.SMTP_FROM ||
-      `"RadiologyInsight AI" <${smtpUser}>`,
+      `"RadioCare" <${smtpUser}>`,
 
     to,
 
-    subject: "Reset your RadiologyInsight AI password",
+    subject: "Reset your RadioCare password",
 
     text: `
 Hello ${name},
 
-We received a request to reset your RadiologyInsight AI password.
+We received a request to reset your RadioCare password.
 
 Open this link to create a new password:
 
@@ -89,7 +89,7 @@ If you did not request a password reset, you can ignore this email.
             font-weight: 800;
           "
         >
-          RI
+          RC
         </div>
 
         <h2 style="margin-bottom: 10px;">
@@ -100,7 +100,7 @@ If you did not request a password reset, you can ignore this email.
 
         <p>
           We received a request to reset your
-          RadiologyInsight AI password.
+          RadioCare password.
         </p>
 
         <p style="margin: 28px 0;">
@@ -132,7 +132,7 @@ If you did not request a password reset, you can ignore this email.
             font-size: 13px;
           "
         >
-          RadiologyInsight AI
+          RadioCare
         </p>
       </div>
     `,

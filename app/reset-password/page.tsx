@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import {
@@ -29,28 +30,32 @@ export default function ResetPasswordPage() {
     useState(false);
 
   useEffect(() => {
-    const searchParameters =
-      new URLSearchParams(window.location.search);
+    const timer = window.setTimeout(() => {
+      const searchParameters =
+        new URLSearchParams(window.location.search);
 
-    const resetToken =
-      searchParameters.get("token");
+      const resetToken =
+        searchParameters.get("token");
 
-    const resetError =
-      searchParameters.get("error");
+      const resetError =
+        searchParameters.get("error");
 
-    if (
-      resetError === "INVALID_TOKEN" ||
-      !resetToken
-    ) {
-      setTokenError(
-        "This password reset link is invalid or has expired."
-      );
+      if (
+        resetError === "INVALID_TOKEN" ||
+        !resetToken
+      ) {
+        setTokenError(
+          "This password reset link is invalid or has expired."
+        );
+        setIsCheckingToken(false);
+        return;
+      }
+
+      setToken(resetToken);
       setIsCheckingToken(false);
-      return;
-    }
+    }, 0);
 
-    setToken(resetToken);
-    setIsCheckingToken(false);
+    return () => window.clearTimeout(timer);
   }, []);
 
   async function handleSubmit(
@@ -204,8 +209,14 @@ export default function ResetPasswordPage() {
 
   return (
     <GlassBackground>
-      <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/25 bg-white/10 text-lg font-bold text-white shadow-lg backdrop-blur-xl">
-        RI
+      <div className="flex h-14 w-14 overflow-hidden rounded-[18px] border border-white/25 bg-white/10 shadow-lg backdrop-blur-xl">
+        <Image
+          src="/images/radiocare-icon.png"
+          alt="RadioCare logo"
+          width={56}
+          height={56}
+          className="h-full w-full object-contain p-1"
+        />
       </div>
 
       <div className="mt-7">
@@ -219,7 +230,7 @@ export default function ResetPasswordPage() {
 
         <p className="mt-3 text-sm leading-6 text-slate-300">
           Enter and confirm the new password for your
-          RadiologyInsight AI account.
+          RadioCare account.
         </p>
       </div>
 

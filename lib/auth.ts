@@ -62,7 +62,7 @@ function getEmailFromBody(body: unknown): string {
 }
 
 export const auth = betterAuth({
-  appName: "RadiologyInsight AI",
+  appName: "RadioCare",
 
   /*
     عنوان وSecret المصادقة من .env.local

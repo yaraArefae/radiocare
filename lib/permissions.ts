@@ -122,10 +122,27 @@ export const technicianRole = ac.newRole({
   audit: [],
 });
 
+/*
+  Patient:
+  يطّلع على البيانات الخاصة به فقط ويقدر يشوف سجلاته
+  ونتائج الفحوصات المرتبطة به.
+*/
+export const patientRole = ac.newRole({
+  study: ["read"],
+
+  report: ["read"],
+
+  patient: ["read", "update"],
+
+  audit: [],
+});
+
 export const roles = {
   admin: adminRole,
+  doctor: radiologistRole,
   radiologist: radiologistRole,
   technician: technicianRole,
+  patient: patientRole,
 };
 
 export type AppRole = keyof typeof roles;

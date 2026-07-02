@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 
 import { authClient } from "@/lib/auth-client";
@@ -224,20 +225,16 @@ export default function PatientsPage() {
             onClick={() =>
               router.push("/dashboard")
             }
-            className="flex items-center gap-3 text-left"
+            className="flex items-center text-left"
           >
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/25 bg-white/10 font-bold text-white shadow-lg backdrop-blur-xl">
-              RI
-            </div>
-
-            <div>
-              <h1 className="font-bold text-white">
-                RadiologyInsight AI
-              </h1>
-
-              <p className="text-xs text-slate-300">
-                Intelligent Medical Imaging Platform
-              </p>
+            <div className="flex h-12 w-12 overflow-hidden rounded-[18px] border border-white/25 bg-white/10 shadow-lg backdrop-blur-xl">
+              <Image
+                src="/images/radiocare-icon.png"
+                alt="RadioCare logo"
+                width={48}
+                height={48}
+                className="h-full w-full object-contain p-1"
+              />
             </div>
           </button>
 

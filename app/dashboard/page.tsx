@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect } from "react";
+import Image from "next/image";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { authClient } from "@/lib/auth-client";
@@ -36,7 +37,7 @@ const statistics: Statistic[] = [
   {
     title: "Waiting for Review",
     value: "7",
-    description: "Require radiologist review",
+    description: "Require doctor review",
   },
   {
     title: "Abnormal Cases",
@@ -175,6 +176,19 @@ export default function DashboardPage() {
     .split(",")
     .map((role) => {
       const trimmedRole = role.trim();
+      const normalizedRole = trimmedRole.toLowerCase();
+
+      if (normalizedRole === "radiologist") {
+        return "Doctor";
+      }
+
+      if (normalizedRole === "doctor") {
+        return "Doctor";
+      }
+
+      if (normalizedRole === "technician") {
+        return "Technician";
+      }
 
       return (
         trimmedRole.charAt(0).toUpperCase() +
@@ -192,7 +206,8 @@ export default function DashboardPage() {
     .filter(Boolean);
 
   const isAdmin = userRoles.includes("admin");
-  const isRadiologist =
+  const isDoctor =
+    userRoles.includes("doctor") ||
     userRoles.includes("radiologist");
   const isTechnician =
     userRoles.includes("technician");
@@ -201,10 +216,10 @@ export default function DashboardPage() {
     isAdmin || isTechnician;
 
   const canReviewStudies =
-    isAdmin || isRadiologist;
+    isAdmin || isDoctor;
 
   const canViewReports =
-    isAdmin || isRadiologist;
+    isAdmin || isDoctor;
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-blue-950 text-white">
@@ -221,19 +236,16 @@ export default function DashboardPage() {
       {/* Header */}
       <header className="sticky top-0 z-40 border-b border-white/15 bg-blue-950/45 shadow-[0_10px_35px_rgba(0,0,0,0.18)] backdrop-blur-2xl">
         <div className="mx-auto flex max-w-[1700px] items-center justify-between px-5 py-4 sm:px-7">
-          <div className="flex items-center gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/25 bg-white/10 font-bold text-white shadow-lg backdrop-blur-xl">
-              RI
-            </div>
-
-            <div>
-              <h1 className="font-bold text-white">
-                RadiologyInsight AI
-              </h1>
-
-              <p className="text-xs text-slate-300">
-                Intelligent Medical Imaging Platform
-              </p>
+          <div className="flex items-center">
+            <div className="flex h-12 w-12 overflow-hidden rounded-[18px] border border-white/25 bg-white/10 shadow-lg backdrop-blur-xl">
+              <Image
+                src="/images/radiocare-icon.png"
+                alt="RadioCare logo"
+                width={48}
+                height={48}
+                className="h-full w-full object-contain p-1"
+                priority
+              />
             </div>
           </div>
 
@@ -364,6 +376,26 @@ export default function DashboardPage() {
                 <button
                   type="button"
                   onClick={() =>
+                    router.push("/admin/doctor-requests")
+                  }
+                  className="w-full rounded-xl border border-transparent px-4 py-3 text-left font-medium text-slate-200 transition hover:border-white/15 hover:bg-white/10"
+                >
+                  Doctor Requests
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push("/doctor-request")
+                  }
+                  className="w-full rounded-xl border border-transparent px-4 py-3 text-left font-medium text-slate-200 transition hover:border-white/15 hover:bg-white/10"
+                >
+                  Add Doctor Request
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
                     router.push("/login-attempts")
                   }
                   className="w-full rounded-xl border border-transparent px-4 py-3 text-left font-medium text-slate-200 transition hover:border-white/15 hover:bg-white/10"
@@ -413,6 +445,8 @@ export default function DashboardPage() {
               AI-assisted findings.
             </p>
           </div>
+
+          {isAdmin && <AdminDoctorManagement />}
 
           {/* Statistics */}
           <div className="mt-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
@@ -483,7 +517,7 @@ export default function DashboardPage() {
 
                 <p className="mt-1 text-sm text-slate-300">
                   Recent medical X-ray studies requiring
-                  radiologist review.
+                  doctor review.
                 </p>
               </div>
 
@@ -606,5 +640,175 @@ export default function DashboardPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+
+type DoctorRequestSummary = {
+  status:
+    | "Pending"
+    | "Under Review"
+    | "Needs More Information"
+    | "Approved"
+    | "Rejected"
+    | "Suspended";
+};
+
+function AdminDoctorManagement() {
+  const router = useRouter();
+
+  const [requests, setRequests] = useState<
+    DoctorRequestSummary[]
+  >([]);
+
+  const [isLoading, setIsLoading] =
+    useState(true);
+
+  const [loadError, setLoadError] =
+    useState("");
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadDoctorRequests() {
+      try {
+        const response = await fetch(
+          "/api/doctor-requests",
+          {
+            method: "GET",
+            cache: "no-store",
+          }
+        );
+
+        const data = (await response.json()) as {
+          applications?: DoctorRequestSummary[];
+          message?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(
+            data.message ||
+              "Unable to load doctor requests."
+          );
+        }
+
+        if (isActive) {
+          setRequests(data.applications || []);
+        }
+      } catch (error) {
+        console.error(
+          "Failed to load doctor request summary:",
+          error
+        );
+
+        if (isActive) {
+          setLoadError(
+            "Doctor request totals are unavailable."
+          );
+        }
+      } finally {
+        if (isActive) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void loadDoctorRequests();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
+
+  const pendingCount = requests.filter(
+    (item) =>
+      item.status === "Pending" ||
+      item.status === "Under Review" ||
+      item.status === "Needs More Information"
+  ).length;
+
+  const approvedCount = requests.filter(
+    (item) => item.status === "Approved"
+  ).length;
+
+  return (
+    <section className="mt-8 rounded-[28px] border border-cyan-300/20 bg-gradient-to-r from-blue-500/15 to-cyan-400/10 p-6 shadow-[0_24px_70px_rgba(0,0,0,0.22)] backdrop-blur-2xl">
+      <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-center">
+        <div>
+          <p className="text-sm font-semibold text-cyan-300">
+            Doctor Management
+          </p>
+
+          <h3 className="mt-2 text-2xl font-bold text-white">
+            Registration and approval
+          </h3>
+
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+            Open a new doctor request, review submitted
+            credentials, approve the doctor, and generate
+            temporary login credentials.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={() =>
+              router.push("/doctor-request")
+            }
+            className="rounded-xl border border-white/20 bg-white/10 px-5 py-3 font-semibold text-white transition hover:bg-white/15"
+          >
+            Add Doctor Request
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              router.push(
+                "/admin/doctor-requests"
+              )
+            }
+            className="rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 py-3 font-semibold text-white shadow-[0_14px_40px_rgba(14,116,255,0.3)] transition hover:-translate-y-0.5"
+          >
+            Review Doctor Requests
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-4 sm:grid-cols-3">
+        <div className="rounded-2xl border border-white/15 bg-white/10 p-4">
+          <p className="text-sm text-slate-300">
+            Total requests
+          </p>
+          <p className="mt-2 text-3xl font-bold text-white">
+            {isLoading ? "..." : requests.length}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4">
+          <p className="text-sm text-amber-100">
+            Waiting for action
+          </p>
+          <p className="mt-2 text-3xl font-bold text-white">
+            {isLoading ? "..." : pendingCount}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-green-300/20 bg-green-300/10 p-4">
+          <p className="text-sm text-green-100">
+            Approved doctors
+          </p>
+          <p className="mt-2 text-3xl font-bold text-white">
+            {isLoading ? "..." : approvedCount}
+          </p>
+        </div>
+      </div>
+
+      {loadError && (
+        <p className="mt-4 text-sm text-amber-100">
+          {loadError}
+        </p>
+      )}
+    </section>
   );
 }
