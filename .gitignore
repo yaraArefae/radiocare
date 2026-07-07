@@ -66,3 +66,12 @@ ai-service/models/*.pt
 # Next.js
 node_modules/
 .next/
+node_modules
+.next
+.env
+.env.local
+.env.*
+*.db
+*.sqlite
+*.sqlite3
+.DS_Store
