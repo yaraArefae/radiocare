@@ -1,36 +1,20 @@
 {
-  "name": "frontend",
-  "version": "0.1.0",
+  "name": "radiocare",
+  "version": "1.0.0",
   "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
-  },
-  "dependencies": {
-    "better-auth": "^1.6.20",
-    "better-sqlite3": "^12.11.1",
-    "next": "16.2.9",
-    "nodemailer": "^9.0.1",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^20",
-    "@types/nodemailer": "^8.0.1",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.9",
-    "tailwindcss": "^4",
-    "typescript": "^5"
-  },
-  "allowScripts": {
-    "better-sqlite3@12.11.1": true,
-    "sharp@0.34.5": true,
-    "unrs-resolver@1.12.2": true
+    "dev": "node scripts/dev.mjs",
+    "dev:all": "node scripts/dev.mjs --with-ai",
+    "dev:frontend": "npm run dev --workspace frontend",
+    "dev:backend": "npm run dev --workspace backend",
+    "dev:ai": "ai-service\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --reload-dir ai-service/app --port 8001 --app-dir ai-service",
+    "db:up": "node scripts/db-up.mjs",
+    "build": "npm run build --workspace backend && npm run build --workspace frontend",
+    "typecheck": "npm run typecheck --workspace backend && npm run typecheck --workspace frontend",
+    "lint": "npm run lint --workspace frontend"
   }
 }

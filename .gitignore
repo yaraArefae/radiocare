@@ -14,7 +14,8 @@
 /coverage
 
 # next.js
-/.next/
+/frontend/.next/
+/backend/.next/
 /out/
 
 # production
@@ -45,12 +46,13 @@ next-env.d.ts
 .env.*.local
 
 # Database files
-radiology-auth.db
-radiology-auth.db-shm
-radiology-auth.db-wal
+backend/radiology-auth.db
+backend/radiology-auth.db-shm
+backend/radiology-auth.db-wal
+backend/legacy-sqlite/
 
 # Uploaded medical images
-storage/
+backend/storage/
 
 # Python AI service
 ai-service/.venv/
@@ -75,3 +77,30 @@ node_modules
 *.sqlite
 *.sqlite3
 .DS_Store
+# Dependencies and builds
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+
+# Python environment and cache
+.venv/
+**/.venv/
+__pycache__/
+*.pyc
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Medical images and uploaded files
+ai-service/data/
+backend/storage/studies/
+
+# Trained AI models
+ai-service/models/
+*.keras
+*.h5
+*.pt
+*.pth
