@@ -384,6 +384,27 @@ export default function Home() {
                   {activeRole.description}
                 </p>
 
+                {selectedRole === "patient" && (
+                  <div className="mt-4 rounded-2xl border border-cyan-300/40 bg-cyan-100/30 p-4 shadow-sm backdrop-blur-xl">
+                    <p className="text-sm font-semibold text-slate-800">
+                      Do not have a patient account yet?
+                    </p>
+
+                    <p className="mt-1 text-xs leading-5 text-slate-600">
+                      Send your information, symptoms, and medical history.
+                      After administrator approval you will receive your
+                      sign-in details.
+                    </p>
+
+                    <Link
+                      href="/patient-request"
+                      className="mt-3 inline-flex w-full items-center justify-center rounded-xl border border-cyan-400/40 bg-white/45 px-4 py-2.5 text-sm font-semibold text-blue-700 transition hover:border-blue-400 hover:bg-white/70"
+                    >
+                      Submit Patient Registration Request
+                    </Link>
+                  </div>
+                )}
+
                 {selectedRole === "doctor" && (
                   <div className="mt-4 rounded-2xl border border-cyan-300/40 bg-cyan-100/30 p-4 shadow-sm backdrop-blur-xl">
                     <p className="text-sm font-semibold text-slate-800">

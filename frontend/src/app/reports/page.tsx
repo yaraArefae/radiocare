@@ -1,619 +1,298 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { authClient } from "@/client/auth/auth-client";
 
-type ReportStatus =
-  | "Draft"
-  | "Ready"
-  | "Approved";
+const backendBaseUrl = (
+  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000"
+).replace(/\/$/, "");
 
-type Report = {
+type ReportRow = {
   id: string;
   studyId: string;
   patient: string;
   patientId: string;
   bodyRegion: string;
-  finding: string;
+  clinicKey: string;
+  priority: string;
+  finalFinding: string;
+  impression: string;
+  severity: string;
+  aiAgreement: string;
+  followUpRequired: boolean;
   doctor: string;
+  status: string;
+  approvedAt: string | null;
   createdAt: string;
-  status: ReportStatus;
+  aiFinding: string;
 };
 
-type SessionUser = {
-  name: string;
-  email: string;
-  role?: string | string[] | null;
+const statusStyle: Record<string, string> = {
+  Draft: "border-amber-300/30 bg-amber-400/15 text-amber-100",
+  Approved: "border-emerald-300/30 bg-emerald-400/15 text-emerald-100",
 };
 
-const reportsData: Report[] = [
-  {
-    id: "RP-2001",
-    studyId: "ST-1001",
-    patient: "Patient 001",
-    patientId: "PT-001",
-    bodyRegion: "Chest",
-    finding: "Possible Cardiomegaly",
-    doctor: "Dr. Ahmad",
-    createdAt: "2026-06-26",
-    status: "Ready",
-  },
-  {
-    id: "RP-2002",
-    studyId: "ST-1002",
-    patient: "Patient 002",
-    patientId: "PT-002",
-    bodyRegion: "Wrist",
-    finding: "Distal Radius Fracture",
-    doctor: "Dr. Ahmad",
-    createdAt: "2026-06-26",
-    status: "Draft",
-  },
-  {
-    id: "RP-2003",
-    studyId: "ST-1003",
-    patient: "Patient 003",
-    patientId: "PT-003",
-    bodyRegion: "Knee",
-    finding: "No Acute Abnormality",
-    doctor: "Dr. Lina",
-    createdAt: "2026-06-25",
-    status: "Approved",
-  },
-  {
-    id: "RP-2004",
-    studyId: "ST-1004",
-    patient: "Patient 004",
-    patientId: "PT-004",
-    bodyRegion: "Dental",
-    finding: "Possible Deep Dental Caries",
-    doctor: "Dr. Lina",
-    createdAt: "2026-06-25",
-    status: "Ready",
-  },
-  {
-    id: "RP-2005",
-    studyId: "ST-1005",
-    patient: "Patient 005",
-    patientId: "PT-005",
-    bodyRegion: "Spine",
-    finding: "Lumbar Disc Space Narrowing",
-    doctor: "Dr. Ahmad",
-    createdAt: "2026-06-24",
-    status: "Approved",
-  },
-];
+const agreementStyle: Record<string, string> = {
+  Confirmed: "border-emerald-300/30 bg-emerald-400/10 text-emerald-100",
+  Modified: "border-amber-300/30 bg-amber-400/10 text-amber-100",
+  Rejected: "border-rose-300/30 bg-rose-500/10 text-rose-100",
+};
 
 export default function ReportsPage() {
   const router = useRouter();
+  const { data: session, isPending } = authClient.useSession();
 
-  const {
-    data: session,
-    isPending,
-  } = authClient.useSession();
+  const [reports, setReports] = useState<ReportRow[]>([]);
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
 
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("All");
-  const [bodyRegion, setBodyRegion] = useState("All");
+  const loadReports = useCallback(async () => {
+    try {
+      setIsLoading(true);
+
+      const response = await fetch(`${backendBaseUrl}/api/reports`, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Unable to load the reports.");
+      }
+
+      setReports(data.reports ?? []);
+      setErrorMessage("");
+    } catch (error) {
+      setReports([]);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to load the reports.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    if (!isPending && !session) {
+    if (isPending) return;
+
+    if (!session) {
       router.replace("/");
+      return;
     }
-  }, [isPending, session, router]);
 
-  const filteredReports = useMemo(() => {
-    const normalizedSearch = search
-      .trim()
-      .toLowerCase();
+    void loadReports();
+  }, [isPending, loadReports, router, session]);
 
-    return reportsData.filter((report) => {
-      const matchesSearch =
-        !normalizedSearch ||
-        report.id
-          .toLowerCase()
-          .includes(normalizedSearch) ||
-        report.studyId
-          .toLowerCase()
-          .includes(normalizedSearch) ||
-        report.patient
-          .toLowerCase()
-          .includes(normalizedSearch) ||
-        report.patientId
-          .toLowerCase()
-          .includes(normalizedSearch) ||
-        report.finding
-          .toLowerCase()
-          .includes(normalizedSearch);
+  const visibleReports = useMemo(() => {
+    const term = searchTerm.trim().toLowerCase();
 
-      const matchesStatus =
-        status === "All" ||
-        report.status === status;
+    return reports.filter((report) => {
+      if (statusFilter !== "All" && report.status !== statusFilter) {
+        return false;
+      }
 
-      const matchesRegion =
-        bodyRegion === "All" ||
-        report.bodyRegion === bodyRegion;
+      if (!term) return true;
 
-      return (
-        matchesSearch &&
-        matchesStatus &&
-        matchesRegion
-      );
+      return [
+        report.id,
+        report.studyId,
+        report.patient,
+        report.finalFinding,
+        report.doctor,
+        report.bodyRegion,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(term);
     });
-  }, [search, status, bodyRegion]);
+  }, [reports, searchTerm, statusFilter]);
 
   if (isPending) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-blue-950">
-        <div className="text-center">
-          <div className="mx-auto h-11 w-11 animate-spin rounded-full border-4 border-cyan-300/20 border-t-cyan-300" />
-
-          <p className="mt-4 font-semibold text-cyan-100">
-            Loading reports...
-          </p>
-        </div>
+      <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#06142f] via-[#0a2450] to-[#071a38]">
+        <p className="font-bold text-cyan-100">Loading reports...</p>
       </main>
     );
   }
 
-  if (!session) {
-    return null;
-  }
-
-  const currentUser =
-    session.user as SessionUser;
-
-  const userRoles = (
-    Array.isArray(currentUser.role)
-      ? currentUser.role
-      : (currentUser.role || "").split(",")
-  )
-    .map((role) =>
-      role.trim().toLowerCase()
-    )
-    .filter(Boolean);
-
-  const canViewReports =
-    userRoles.includes("admin") ||
-    userRoles.includes("doctor");
-
-  if (!canViewReports) {
-    router.replace("/unauthorized");
-    return null;
-  }
-
-  const approvedCount = reportsData.filter(
-    (report) =>
-      report.status === "Approved"
-  ).length;
-
-  const draftCount = reportsData.filter(
-    (report) =>
-      report.status === "Draft"
-  ).length;
-
-  const readyCount = reportsData.filter(
-    (report) =>
-      report.status === "Ready"
-  ).length;
-
-  function getStatusStyle(
-    reportStatus: ReportStatus
-  ) {
-    if (reportStatus === "Approved") {
-      return "border-green-300/30 bg-green-500/20 text-green-100";
-    }
-
-    if (reportStatus === "Ready") {
-      return "border-cyan-300/30 bg-cyan-400/20 text-cyan-100";
-    }
-
-    return "border-amber-300/30 bg-amber-400/20 text-amber-100";
-  }
+  if (!session) return null;
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-blue-950 text-white">
-      {/* Background */}
-      <div className="pointer-events-none fixed inset-0 bg-gradient-to-br from-slate-950 via-blue-950 to-cyan-950" />
+    <main className="min-h-screen bg-gradient-to-br from-[#06142f] via-[#0a2450] to-[#071a38] px-6 py-8">
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[0.07] px-4 py-2.5 font-bold text-cyan-200 transition hover:border-cyan-300/50 hover:text-white"
+          >
+            <span>←</span>
+            <span>Back to dashboard</span>
+          </Link>
 
-      <div className="pointer-events-none fixed -left-40 top-16 h-[500px] w-[500px] rounded-full bg-blue-500/25 blur-[160px]" />
-
-      <div className="pointer-events-none fixed -right-40 bottom-0 h-[540px] w-[540px] rounded-full bg-cyan-400/20 blur-[170px]" />
-
-      {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-white/15 bg-blue-950/45 shadow-[0_10px_35px_rgba(0,0,0,0.18)] backdrop-blur-2xl">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between px-5 py-4 sm:px-7">
           <button
             type="button"
-            onClick={() =>
-              router.push("/dashboard")
-            }
-            className="flex items-center text-left"
+            onClick={() => void loadReports()}
+            disabled={isLoading}
+            className="rounded-2xl border border-cyan-300/30 bg-cyan-400/10 px-5 py-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/20 disabled:opacity-60"
           >
-            <div className="flex h-12 w-12 overflow-hidden rounded-[18px] border border-white/25 bg-white/10 shadow-lg backdrop-blur-xl">
-              <Image
-                src="/images/radiocare-icon.png"
-                alt="RadioCare logo"
-                width={48}
-                height={48}
-                className="h-full w-full object-contain p-1"
-              />
-            </div>
+            {isLoading ? "Refreshing..." : "Refresh"}
           </button>
-
-          <div className="flex items-center gap-3">
-            <div className="hidden text-right sm:block">
-              <p className="text-sm font-semibold text-white">
-                {currentUser.name}
-              </p>
-
-              <p className="text-xs text-cyan-300">
-                Reports workspace
-              </p>
-            </div>
-
-            <button
-              type="button"
-              onClick={() =>
-                router.push("/dashboard")
-              }
-              className="rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-semibold text-white backdrop-blur-xl transition hover:bg-white/15"
-            >
-              Dashboard
-            </button>
-          </div>
         </div>
-      </header>
 
-      <section className="relative z-10 mx-auto max-w-[1600px] px-5 py-9 sm:px-7">
-        {/* Heading */}
-        <div>
-          <p className="font-semibold text-cyan-300">
+        <section className="rounded-3xl border border-white/20 bg-white/[0.08] p-7 backdrop-blur-2xl">
+          <p className="text-sm font-bold uppercase tracking-[0.22em] text-cyan-300">
             Medical documentation
           </p>
 
-          <h2 className="mt-2 text-3xl font-bold text-white sm:text-4xl">
-            Radiology Reports
-          </h2>
+          <h1 className="mt-2 text-3xl font-black text-white md:text-4xl">
+            Medical Reports
+          </h1>
 
-          <p className="mt-3 max-w-2xl text-slate-300">
-            Review, approve and manage medical
-            imaging reports generated from completed
-            X-ray studies.
+          <p className="mt-3 max-w-3xl leading-7 text-slate-300">
+            Every report holds the final decision of the doctor next to the
+            preliminary AI result. A report becomes visible to the patient
+            once it is approved.
           </p>
+        </section>
+
+        {errorMessage && (
+          <div className="mt-6 rounded-2xl border border-rose-300/30 bg-rose-500/10 p-4 font-bold text-rose-100">
+            {errorMessage}
+          </div>
+        )}
+
+        <div className="mt-6 flex flex-wrap items-center gap-3">
+          {["All", "Draft", "Approved"].map((status) => (
+            <button
+              key={status}
+              type="button"
+              onClick={() => setStatusFilter(status)}
+              className={[
+                "rounded-xl border px-4 py-2 text-sm font-bold transition",
+                statusFilter === status
+                  ? "border-cyan-300/60 bg-cyan-400/20 text-white"
+                  : "border-white/15 bg-white/[0.05] text-slate-300 hover:text-white",
+              ].join(" ")}
+            >
+              {status}
+            </button>
+          ))}
+
+          <input
+            type="search"
+            value={searchTerm}
+            onChange={(event) => setSearchTerm(event.target.value)}
+            placeholder="Search by patient, study, or finding..."
+            className="min-w-56 flex-1 rounded-xl border border-white/20 bg-white/[0.07] px-4 py-2.5 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/60"
+          />
         </div>
 
-        {/* Statistics */}
-        <div className="mt-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-          <StatisticCard
-            title="Total Reports"
-            value={String(reportsData.length)}
-            description="All generated reports"
-          />
-
-          <StatisticCard
-            title="Draft Reports"
-            value={String(draftCount)}
-            description="Still being edited"
-            variant="warning"
-          />
-
-          <StatisticCard
-            title="Ready for Approval"
-            value={String(readyCount)}
-            description="Awaiting final approval"
-            variant="info"
-          />
-
-          <StatisticCard
-            title="Approved Reports"
-            value={String(approvedCount)}
-            description="Completed and approved"
-            variant="success"
-          />
-        </div>
-
-        {/* Filters */}
-        <div className="mt-8 grid gap-4 rounded-2xl border border-white/15 bg-white/10 p-5 shadow-[0_20px_60px_rgba(0,0,0,0.2)] backdrop-blur-2xl md:grid-cols-3">
-          <div>
-            <label
-              htmlFor="search"
-              className="mb-2 block text-sm font-semibold text-slate-200"
-            >
-              Search reports
-            </label>
-
-            <input
-              id="search"
-              type="search"
-              value={search}
-              onChange={(event) =>
-                setSearch(event.target.value)
-              }
-              placeholder="Report, study or patient..."
-              className="w-full rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-white outline-none backdrop-blur-xl transition placeholder:text-slate-400 focus:border-cyan-300 focus:bg-white/15 focus:ring-4 focus:ring-cyan-300/10"
-            />
-          </div>
-
-          <div>
-            <label
-              htmlFor="bodyRegion"
-              className="mb-2 block text-sm font-semibold text-slate-200"
-            >
-              Body region
-            </label>
-
-            <select
-              id="bodyRegion"
-              value={bodyRegion}
-              onChange={(event) =>
-                setBodyRegion(event.target.value)
-              }
-              className="w-full rounded-xl border border-white/20 bg-blue-950/70 px-4 py-3 text-white outline-none transition focus:border-cyan-300 focus:ring-4 focus:ring-cyan-300/10"
-            >
-              <option value="All">
-                All body regions
-              </option>
-
-              <option value="Chest">
-                Chest
-              </option>
-
-              <option value="Wrist">
-                Wrist
-              </option>
-
-              <option value="Knee">
-                Knee
-              </option>
-
-              <option value="Dental">
-                Dental
-              </option>
-
-              <option value="Spine">
-                Spine
-              </option>
-            </select>
-          </div>
-
-          <div>
-            <label
-              htmlFor="status"
-              className="mb-2 block text-sm font-semibold text-slate-200"
-            >
-              Report status
-            </label>
-
-            <select
-              id="status"
-              value={status}
-              onChange={(event) =>
-                setStatus(event.target.value)
-              }
-              className="w-full rounded-xl border border-white/20 bg-blue-950/70 px-4 py-3 text-white outline-none transition focus:border-cyan-300 focus:ring-4 focus:ring-cyan-300/10"
-            >
-              <option value="All">
-                All statuses
-              </option>
-
-              <option value="Draft">
-                Draft
-              </option>
-
-              <option value="Ready">
-                Ready
-              </option>
-
-              <option value="Approved">
-                Approved
-              </option>
-            </select>
-          </div>
-        </div>
-
-        {/* Reports table */}
-        <div className="mt-6 overflow-hidden rounded-2xl border border-white/15 bg-white/10 shadow-[0_25px_70px_rgba(0,0,0,0.24)] backdrop-blur-2xl">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[1200px] text-left">
-              <thead>
-                <tr className="border-b border-white/15 bg-white/10 text-sm text-slate-200">
-                  <th className="px-5 py-4 font-semibold">
-                    Report ID
-                  </th>
-
-                  <th className="px-5 py-4 font-semibold">
-                    Study
-                  </th>
-
-                  <th className="px-5 py-4 font-semibold">
-                    Patient
-                  </th>
-
-                  <th className="px-5 py-4 font-semibold">
-                    Body Region
-                  </th>
-
-                  <th className="px-5 py-4 font-semibold">
-                    Finding
-                  </th>
-
-                  <th className="px-5 py-4 font-semibold">
-                    Doctor
-                  </th>
-
-                  <th className="px-5 py-4 font-semibold">
-                    Date
-                  </th>
-
-                  <th className="px-5 py-4 font-semibold">
-                    Status
-                  </th>
-
-                  <th className="px-5 py-4 font-semibold">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {filteredReports.map((report) => (
-                  <tr
-                    key={report.id}
-                    className="border-b border-white/10 text-sm text-slate-200 transition last:border-0 hover:bg-white/10"
-                  >
-                    <td className="px-5 py-5 font-bold text-white">
+        <div className="mt-6 grid gap-4 lg:grid-cols-2">
+          {isLoading ? (
+            <p className="rounded-3xl border border-white/15 bg-white/[0.05] p-8 text-center text-slate-300 lg:col-span-2">
+              Loading...
+            </p>
+          ) : visibleReports.length === 0 ? (
+            <p className="rounded-3xl border border-dashed border-white/20 bg-white/[0.04] p-10 text-center text-slate-300 lg:col-span-2">
+              No reports match this view yet.
+            </p>
+          ) : (
+            visibleReports.map((report) => (
+              <article
+                key={report.id}
+                className="rounded-3xl border border-white/15 bg-white/[0.06] p-6 backdrop-blur-2xl"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-[0.16em] text-cyan-300">
                       {report.id}
-                    </td>
+                    </p>
 
-                    <td className="px-5 py-5 font-semibold text-cyan-300">
+                    <h2 className="mt-2 text-xl font-black text-white">
+                      {report.patient}
+                    </h2>
+
+                    <p className="mt-1 text-sm text-slate-400">
+                      {report.bodyRegion} · {report.priority} ·{" "}
                       {report.studyId}
-                    </td>
+                    </p>
+                  </div>
 
-                    <td className="px-5 py-5">
-                      <p className="font-semibold text-white">
-                        {report.patient}
-                      </p>
-
-                      <p className="mt-1 text-xs text-slate-400">
-                        {report.patientId}
-                      </p>
-                    </td>
-
-                    <td className="px-5 py-5">
-                      <span className="rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-slate-100">
-                        {report.bodyRegion}
-                      </span>
-                    </td>
-
-                    <td className="max-w-[260px] px-5 py-5 leading-6">
-                      {report.finding}
-                    </td>
-
-                    <td className="px-5 py-5">
-                      {report.doctor}
-                    </td>
-
-                    <td className="px-5 py-5">
-                      {report.createdAt}
-                    </td>
-
-                    <td className="px-5 py-5">
-                      <span
-                        className={`rounded-full border px-3 py-1.5 font-semibold ${getStatusStyle(
-                          report.status
-                        )}`}
-                      >
-                        {report.status}
-                      </span>
-                    </td>
-
-                    <td className="px-5 py-5">
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            router.push(
-                              `/reports/${report.id}`
-                            )
-                          }
-                          className="rounded-lg border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 font-semibold text-cyan-200 transition hover:bg-cyan-300/20 hover:text-white"
-                        >
-                          View
-                        </button>
-
-                        <button
-                          type="button"
-                          className="rounded-lg border border-white/20 bg-white/10 px-3 py-2 font-semibold text-white transition hover:bg-white/15"
-                        >
-                          Download
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-
-                {filteredReports.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={9}
-                      className="px-5 py-16 text-center"
+                  <div className="flex flex-col items-end gap-2">
+                    <span
+                      className={`rounded-full border px-3 py-1.5 text-xs font-black ${
+                        statusStyle[report.status] ??
+                        "border-white/20 bg-white/10 text-slate-200"
+                      }`}
                     >
-                      <p className="font-semibold text-white">
-                        No reports found
-                      </p>
+                      {report.status}
+                    </span>
 
-                      <p className="mt-2 text-sm text-slate-400">
-                        Try changing the search or
-                        filter options.
-                      </p>
-                    </td>
-                  </tr>
+                    {report.aiAgreement && (
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-[11px] font-bold ${
+                          agreementStyle[report.aiAgreement] ??
+                          "border-white/20 bg-white/10 text-slate-200"
+                        }`}
+                      >
+                        AI {report.aiAgreement}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-white/10 bg-black/15 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Final finding
+                  </p>
+
+                  <p className="mt-1 font-black text-white">
+                    {report.finalFinding || "—"}
+                  </p>
+
+                  {report.aiFinding && (
+                    <p className="mt-2 text-xs text-slate-400">
+                      Preliminary AI result: {report.aiFinding}
+                    </p>
+                  )}
+                </div>
+
+                {report.impression && (
+                  <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-300">
+                    {report.impression}
+                  </p>
                 )}
-              </tbody>
-            </table>
-          </div>
-        </div>
 
-        {/* Disclaimer */}
-        <div className="mt-8 rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-5 backdrop-blur-xl">
-          <p className="text-sm leading-6 text-cyan-50">
-            Reports must be reviewed and approved by an
-            authorized doctor before being used for
-            clinical decision-making.
-          </p>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs text-slate-400">
+                    {report.doctor || "Unassigned doctor"}
+                    {report.approvedAt
+                      ? ` · ${new Date(report.approvedAt).toLocaleDateString()}`
+                      : ""}
+                    {report.severity ? ` · ${report.severity}` : ""}
+                  </p>
+
+                  <Link
+                    href={`/studies/${encodeURIComponent(report.studyId)}`}
+                    className="rounded-xl border border-cyan-300/30 bg-cyan-400/15 px-4 py-2 text-sm font-bold text-cyan-100 transition hover:bg-cyan-400/25"
+                  >
+                    Open case
+                  </Link>
+                </div>
+              </article>
+            ))
+          )}
         </div>
-      </section>
+      </div>
     </main>
-  );
-}
-
-type StatisticCardProps = {
-  title: string;
-  value: string;
-  description: string;
-  variant?:
-    | "default"
-    | "warning"
-    | "info"
-    | "success";
-};
-
-function StatisticCard({
-  title,
-  value,
-  description,
-  variant = "default",
-}: StatisticCardProps) {
-  const styles = {
-    default:
-      "border-white/15 bg-white/10",
-    warning:
-      "border-amber-300/25 bg-amber-400/15",
-    info:
-      "border-cyan-300/25 bg-cyan-400/15",
-    success:
-      "border-green-300/25 bg-green-500/15",
-  };
-
-  return (
-    <article
-      className={`rounded-2xl border p-6 shadow-[0_20px_55px_rgba(0,0,0,0.2)] backdrop-blur-xl ${styles[variant]}`}
-    >
-      <p className="text-sm font-semibold text-slate-300">
-        {title}
-      </p>
-
-      <p className="mt-3 text-4xl font-bold text-white">
-        {value}
-      </p>
-
-      <p className="mt-2 text-sm text-slate-300">
-        {description}
-      </p>
-    </article>
   );
 }

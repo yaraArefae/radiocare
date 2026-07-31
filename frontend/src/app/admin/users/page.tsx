@@ -688,7 +688,312 @@ export default function AdminUsersPage() {
           </div>
         </aside>
       </section>
+
+      <AccountManagement />
     </main>
+  );
+}
+
+type ManagedAccount = {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  banned: boolean;
+  createdAt: string;
+};
+
+/*
+  Management of the accounts that already exist: change the role,
+  suspend or reactivate an account, and issue a new password.
+*/
+function AccountManagement() {
+  const [accounts, setAccounts] = useState<ManagedAccount[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [busyId, setBusyId] = useState("");
+  const [message, setMessage] = useState("");
+  const [errorText, setErrorText] = useState("");
+  const [passwordFor, setPasswordFor] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+
+  async function loadAccounts() {
+    try {
+      setIsLoading(true);
+
+      const { data, error } = await authClient.admin.listUsers({
+        query: { limit: 200 },
+      });
+
+      if (error) {
+        throw new Error(error.message || "Unable to load the accounts.");
+      }
+
+      const payload = data as unknown as
+        | { users?: ManagedAccount[] }
+        | ManagedAccount[]
+        | null;
+
+      const list = Array.isArray(payload)
+        ? payload
+        : (payload?.users ?? []);
+
+      setAccounts(
+        list.map((user) => ({
+          id: String(user.id),
+          name: String(user.name ?? ""),
+          email: String(user.email ?? ""),
+          role: String(user.role ?? "patient"),
+          banned: Boolean(user.banned),
+          createdAt: String(user.createdAt ?? ""),
+        })),
+      );
+
+      setErrorText("");
+    } catch (error) {
+      setErrorText(
+        error instanceof Error
+          ? error.message
+          : "Unable to load the accounts.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadAccounts();
+  }, []);
+
+  async function runAction(
+    accountId: string,
+    action: () => Promise<{ error?: { message?: string } | null }>,
+    successText: string,
+  ) {
+    try {
+      setBusyId(accountId);
+      setMessage("");
+      setErrorText("");
+
+      const { error } = await action();
+
+      if (error) {
+        throw new Error(error.message || "The action failed.");
+      }
+
+      setMessage(successText);
+      await loadAccounts();
+    } catch (error) {
+      setErrorText(
+        error instanceof Error ? error.message : "The action failed.",
+      );
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  return (
+    <section className="mx-auto mt-8 w-full max-w-7xl px-6 pb-10">
+      <div className="rounded-3xl border border-white/20 bg-white/[0.08] p-7 backdrop-blur-2xl">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-sm font-bold uppercase tracking-[0.22em] text-cyan-300">
+              Existing accounts
+            </p>
+
+            <h2 className="mt-2 text-2xl font-black text-white">
+              Manage Accounts
+            </h2>
+
+            <p className="mt-2 text-slate-300">
+              Change a role, suspend an account, or issue a new password.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void loadAccounts()}
+            disabled={isLoading}
+            className="rounded-2xl border border-cyan-300/30 bg-cyan-400/10 px-5 py-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/20 disabled:opacity-60"
+          >
+            {isLoading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+
+        {message && (
+          <p className="mt-5 rounded-2xl border border-emerald-300/30 bg-emerald-400/10 px-4 py-3 text-sm font-bold text-emerald-100">
+            {message}
+          </p>
+        )}
+
+        {errorText && (
+          <p className="mt-5 rounded-2xl border border-rose-300/30 bg-rose-500/10 px-4 py-3 text-sm font-bold text-rose-100">
+            {errorText}
+          </p>
+        )}
+
+        <div className="mt-6 flex flex-col gap-3">
+          {isLoading ? (
+            <p className="rounded-2xl border border-white/15 bg-white/[0.05] p-6 text-center text-slate-300">
+              Loading accounts...
+            </p>
+          ) : accounts.length === 0 ? (
+            <p className="rounded-2xl border border-dashed border-white/20 bg-white/[0.04] p-8 text-center text-slate-300">
+              No accounts found.
+            </p>
+          ) : (
+            accounts.map((account) => (
+              <article
+                key={account.id}
+                className="rounded-2xl border border-white/15 bg-white/[0.05] p-5"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-black text-white">
+                      {account.name || "Unnamed account"}
+                    </p>
+                    <p className="mt-1 truncate text-sm text-slate-400">
+                      {account.email}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-cyan-300/20 bg-cyan-300/15 px-3 py-1 text-xs font-bold capitalize text-cyan-100">
+                      {account.role}
+                    </span>
+
+                    <span
+                      className={`rounded-full border px-3 py-1 text-xs font-bold ${
+                        account.banned
+                          ? "border-rose-300/30 bg-rose-500/15 text-rose-100"
+                          : "border-emerald-300/30 bg-emerald-400/15 text-emerald-100"
+                      }`}
+                    >
+                      {account.banned ? "Suspended" : "Active"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <select
+                    value={account.role}
+                    disabled={busyId === account.id}
+                    onChange={(event) =>
+                      void runAction(
+                        account.id,
+                        () =>
+                          authClient.admin.setRole({
+                            userId: account.id,
+                            role: event.target
+                              .value as unknown as UiRole,
+                          }),
+                        "The role was updated.",
+                      )
+                    }
+                    className="rounded-xl border border-white/20 bg-[#17315a] px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/60"
+                  >
+                    <option value="admin">admin</option>
+                    <option value="doctor">doctor</option>
+                    <option value="patient">patient</option>
+                  </select>
+
+                  {account.banned ? (
+                    <button
+                      type="button"
+                      disabled={busyId === account.id}
+                      onClick={() =>
+                        void runAction(
+                          account.id,
+                          () =>
+                            authClient.admin.unbanUser({
+                              userId: account.id,
+                            }),
+                          "The account was reactivated.",
+                        )
+                      }
+                      className="rounded-xl border border-emerald-300/30 bg-emerald-400/15 px-4 py-2 text-sm font-bold text-emerald-100 transition hover:bg-emerald-400/25 disabled:opacity-50"
+                    >
+                      Reactivate
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busyId === account.id}
+                      onClick={() =>
+                        void runAction(
+                          account.id,
+                          () =>
+                            authClient.admin.banUser({
+                              userId: account.id,
+                              banReason:
+                                "Suspended by an administrator.",
+                            }),
+                          "The account was suspended.",
+                        )
+                      }
+                      className="rounded-xl border border-rose-300/30 bg-rose-500/10 px-4 py-2 text-sm font-bold text-rose-100 transition hover:bg-rose-500/20 disabled:opacity-50"
+                    >
+                      Suspend
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPasswordFor(
+                        passwordFor === account.id ? "" : account.id,
+                      );
+                      setNewPassword("");
+                    }}
+                    className="rounded-xl border border-white/20 bg-white/[0.07] px-4 py-2 text-sm font-bold text-slate-200 transition hover:text-white"
+                  >
+                    Reset password
+                  </button>
+                </div>
+
+                {passwordFor === account.id && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <input
+                      type="text"
+                      value={newPassword}
+                      onChange={(event) =>
+                        setNewPassword(event.target.value)
+                      }
+                      placeholder="New password (at least 8 characters)"
+                      className="min-w-56 flex-1 rounded-xl border border-white/20 bg-white/[0.07] px-4 py-2.5 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/60"
+                    />
+
+                    <button
+                      type="button"
+                      disabled={
+                        busyId === account.id ||
+                        newPassword.trim().length < 8
+                      }
+                      onClick={() =>
+                        void runAction(
+                          account.id,
+                          () =>
+                            authClient.admin.setUserPassword({
+                              userId: account.id,
+                              newPassword: newPassword.trim(),
+                            }),
+                          "The new password is active.",
+                        ).then(() => {
+                          setPasswordFor("");
+                          setNewPassword("");
+                        })
+                      }
+                      className="rounded-xl bg-gradient-to-r from-blue-600 to-cyan-400 px-5 py-2.5 text-sm font-black text-white disabled:opacity-50"
+                    >
+                      Save password
+                    </button>
+                  </div>
+                )}
+              </article>
+            ))
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 

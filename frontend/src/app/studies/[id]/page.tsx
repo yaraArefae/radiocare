@@ -1,8 +1,31 @@
 "use client";
+import CaseChat from "@/components/CaseChat";
+import CaseReport from "@/components/CaseReport";
+import NotificationBell from "@/components/NotificationBell";
 import StudyAppointmentChat from "@/components/StudyAppointmentChat";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+
+type AiFinding = {
+  name: string;
+  probability: number;
+  threshold?: number;
+  detected?: boolean;
+  model?: string;
+};
+
+type AiDetailsPayload = {
+  schemaVersion?: number;
+  triageResult?: string;
+  primaryFinding?: string | null;
+  possibleFindings?: AiFinding[];
+  allFindings?: AiFinding[];
+  aiPriority?: string;
+  detectedRegion?: string;
+  detectedClinic?: string;
+  message?: string;
+};
 
 type StudyDetails = {
   id: string;
@@ -17,8 +40,18 @@ type StudyDetails = {
   priority?: string;
   status?: string;
   clinicalNotes?: string | null;
+  symptoms?: string | null;
+  medicalHistory?: string | null;
+  clinicKey?: string | null;
   aiResult?: string | null;
   predictedFinding?: string | null;
+  triageResult?: string | null;
+  primaryFinding?: string | null;
+  possibleFindings?: AiFinding[];
+  allFindings?: AiFinding[];
+  aiPriority?: string | null;
+  detectedRegion?: string | null;
+  detectedClinic?: string | null;
   confidence?: number | null;
   explanation?: string | null;
   modelName?: string | null;
@@ -26,6 +59,37 @@ type StudyDetails = {
   createdAt?: string;
   date?: string;
 };
+
+function parseAiDetails(
+  explanation?: string | null,
+): AiDetailsPayload | null {
+  if (!explanation) {
+    return null;
+  }
+
+  try {
+    const parsedValue: unknown = JSON.parse(
+      explanation,
+    );
+
+    if (
+      typeof parsedValue !== "object" ||
+      parsedValue === null
+    ) {
+      return null;
+    }
+
+    return parsedValue as AiDetailsPayload;
+  } catch {
+    return null;
+  }
+}
+
+function formatProbability(
+  probability: number,
+) {
+  return `${Number(probability).toFixed(2)}%`;
+}
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL ??
@@ -130,10 +194,59 @@ export default function StudyDetailsPage() {
     );
   }
 
+  const aiDetails = parseAiDetails(
+    study.explanation,
+  );
+
   const aiResult =
     study.aiResult ??
     study.predictedFinding ??
     "Not analyzed yet";
+
+  const triageResult =
+    study.triageResult ??
+    aiDetails?.triageResult ??
+    aiResult;
+
+  const primaryFinding =
+    study.primaryFinding ??
+    aiDetails?.primaryFinding ??
+    null;
+
+  const possibleFindings =
+    study.possibleFindings ??
+    aiDetails?.possibleFindings ??
+    [];
+
+  const allFindings =
+    study.allFindings ??
+    aiDetails?.allFindings ??
+    [];
+
+  const aiPriority =
+    study.aiPriority ??
+    aiDetails?.aiPriority ??
+    study.priority ??
+    "ROUTINE";
+
+  const detectedRegion =
+    study.detectedRegion ??
+    aiDetails?.detectedRegion ??
+    study.bodyRegion ??
+    "—";
+
+  const detectedClinic =
+    study.detectedClinic ??
+    aiDetails?.detectedClinic ??
+    "—";
+
+  const aiMessage =
+    aiDetails?.message ??
+    (
+      aiDetails
+        ? null
+        : study.explanation
+    );
 
   const patientName =
     study.patient ??
@@ -146,9 +259,9 @@ export default function StudyDetailsPage() {
     "X-ray";
 
   const resultStyle =
-    aiResult === "NORMAL"
+    triageResult === "NORMAL"
       ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-200"
-      : aiResult === "ABNORMAL"
+      : triageResult === "ABNORMAL"
         ? "border-rose-300/30 bg-rose-400/10 text-rose-200"
         : "border-amber-300/30 bg-amber-400/10 text-amber-200";
 
@@ -157,17 +270,23 @@ export default function StudyDetailsPage() {
       <div className="mx-auto max-w-7xl">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <Link
-            href="/studies?clinic=chest"
+            href={`/studies?clinic=${encodeURIComponent(
+              study.clinicKey ?? "",
+            )}`}
             className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[0.07] px-4 py-2.5 font-bold text-cyan-200 backdrop-blur-xl transition hover:bg-white/[0.12]"
           >
-            ← Back to Chest Studies
+            ← Back to Studies
           </Link>
 
-          <span
-            className={`rounded-full border px-4 py-2 text-sm font-black ${resultStyle}`}
-          >
-            {study.status ?? "Waiting"}
-          </span>
+          <div className="flex items-center gap-3">
+            <span
+              className={`rounded-full border px-4 py-2 text-sm font-black ${resultStyle}`}
+            >
+              {study.status ?? "Waiting"}
+            </span>
+
+            <NotificationBell />
+          </div>
         </div>
 
         <section className="mt-6 rounded-3xl border border-white/20 bg-white/[0.08] p-7 shadow-2xl backdrop-blur-2xl md:p-9">
@@ -190,7 +309,7 @@ export default function StudyDetailsPage() {
             <div
               className={`rounded-2xl border px-5 py-3 font-black ${resultStyle}`}
             >
-              AI Result: {aiResult}
+              AI Result: {triageResult}
             </div>
           </div>
         </section>
@@ -257,14 +376,22 @@ export default function StudyDetailsPage() {
             </section>
 
             <section className="rounded-3xl border border-white/20 bg-white/[0.07] p-6 shadow-xl backdrop-blur-2xl">
-              <h2 className="text-2xl font-black text-white">
-                AI Analysis
-              </h2>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-2xl font-black text-white">
+                  AI Preliminary Findings
+                </h2>
+
+                <span
+                  className={`rounded-full border px-4 py-2 text-sm font-black ${resultStyle}`}
+                >
+                  {triageResult}
+                </span>
+              </div>
 
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
                 <DetailItem
-                  label="Result"
-                  value={aiResult}
+                  label="Triage Result"
+                  value={triageResult}
                 />
 
                 <DetailItem
@@ -277,6 +404,29 @@ export default function StudyDetailsPage() {
                         ).toFixed(2)}%`
                       : "—"
                   }
+                />
+
+                <DetailItem
+                  label="Primary Finding"
+                  value={
+                    primaryFinding ??
+                    "No confirmed finding"
+                  }
+                />
+
+                <DetailItem
+                  label="AI Priority"
+                  value={aiPriority}
+                />
+
+                <DetailItem
+                  label="Detected Region"
+                  value={detectedRegion}
+                />
+
+                <DetailItem
+                  label="Detected Clinic"
+                  value={detectedClinic}
                 />
 
                 <DetailItem
@@ -296,17 +446,69 @@ export default function StudyDetailsPage() {
                 />
               </div>
 
-              {study.explanation && (
-                <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.05] p-4">
+              <div className="mt-6">
+                <h3 className="text-lg font-black text-white">
+                  Findings above decision thresholds
+                </h3>
+
+                {possibleFindings.length > 0 ? (
+                  <div className="mt-4 space-y-3">
+                    {possibleFindings.map(
+                      (finding) => (
+                        <FindingCard
+                          key={`${finding.name}-${finding.probability}`}
+                          finding={finding}
+                          emphasized
+                        />
+                      ),
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-300/[0.07] p-4 text-sm leading-6 text-amber-100">
+                    No supported finding clearly
+                    exceeded its decision threshold.
+                    A near-threshold result may still
+                    require doctor review.
+                  </div>
+                )}
+              </div>
+
+              {allFindings.length > 0 && (
+                <div className="mt-6">
+                  <h3 className="text-lg font-black text-white">
+                    All AI finding probabilities
+                  </h3>
+
+                  <div className="mt-4 max-h-[430px] space-y-3 overflow-y-auto pr-2">
+                    {allFindings.map(
+                      (finding) => (
+                        <FindingCard
+                          key={`${finding.name}-${finding.probability}`}
+                          finding={finding}
+                        />
+                      ),
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {aiMessage && (
+                <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.05] p-4">
                   <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
                     AI Explanation
                   </p>
 
                   <p className="mt-2 leading-7 text-slate-200">
-                    {study.explanation}
+                    {aiMessage}
                   </p>
                 </div>
               )}
+
+              <div className="mt-6 rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.07] p-4 text-sm leading-6 text-cyan-100">
+                These findings are preliminary and
+                must be confirmed or edited by the
+                reviewing doctor.
+              </div>
             </section>
 
             <section className="rounded-3xl border border-white/20 bg-white/[0.07] p-6 shadow-xl backdrop-blur-2xl">
@@ -336,23 +538,136 @@ export default function StudyDetailsPage() {
                 />
               </div>
 
-              {study.clinicalNotes && (
-                <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.05] p-4">
-                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Clinical Notes
-                  </p>
+              {/* What the patient reported, shown to the reviewing doctor */}
+              {[
+                { label: "Symptoms", value: study.symptoms },
+                {
+                  label: "Medical History",
+                  value: study.medicalHistory,
+                },
+                { label: "Clinical Notes", value: study.clinicalNotes },
+              ]
+                .filter((item) => item.value)
+                .map((item) => (
+                  <div
+                    key={item.label}
+                    className="mt-5 rounded-2xl border border-white/10 bg-white/[0.05] p-4"
+                  >
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                      {item.label}
+                    </p>
 
-                  <p className="mt-2 leading-7 text-slate-200">
-                    {study.clinicalNotes}
-                  </p>
-                </div>
-              )}
+                    <p className="mt-2 whitespace-pre-wrap leading-7 text-slate-200">
+                      {item.value}
+                    </p>
+                  </div>
+                ))}
             </section>
           </div>
         </div>
+        <div className="mt-7">
+          <CaseReport
+            studyId={study.id}
+            mode="doctor"
+            aiResult={study.aiResult ?? undefined}
+          />
+        </div>
+
+        <div className="mt-7">
+          <CaseChat
+            studyId={study.id}
+            title={`Follow-up with ${study.patientName ?? "the patient"}`}
+          />
+        </div>
+
         <StudyAppointmentChat studyId={study.id} />
       </div>
     </main>
+  );
+}
+
+function FindingCard({
+  finding,
+  emphasized = false,
+}: {
+  finding: AiFinding;
+  emphasized?: boolean;
+}) {
+  const probability = Math.min(
+    100,
+    Math.max(0, Number(finding.probability)),
+  );
+
+  const threshold =
+    finding.threshold !== undefined
+      ? Math.min(
+          100,
+          Math.max(
+            0,
+            Number(finding.threshold),
+          ),
+        )
+      : null;
+
+  const detected =
+    finding.detected ??
+    (
+      threshold !== null
+        ? probability >= threshold
+        : emphasized
+    );
+
+  const statusText = detected
+    ? "Above threshold"
+    : threshold !== null &&
+        threshold - probability <= 10
+      ? "Near threshold — doctor review"
+      : "Below threshold";
+
+  return (
+    <div
+      className={`rounded-2xl border p-4 ${
+        emphasized
+          ? "border-rose-300/25 bg-rose-300/[0.07]"
+          : "border-white/10 bg-white/[0.05]"
+      }`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="font-black text-white">
+          {finding.name}
+        </p>
+
+        <span
+          className={`rounded-full border px-3 py-1 text-sm font-black ${
+            detected
+              ? "border-rose-300/30 bg-rose-400/10 text-rose-200"
+              : "border-amber-300/25 bg-amber-300/[0.08] text-amber-100"
+          }`}
+        >
+          {formatProbability(probability)}
+        </span>
+      </div>
+
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10">
+        <div
+          className="h-full rounded-full bg-cyan-300"
+          style={{
+            width: `${probability}%`,
+          }}
+        />
+      </div>
+
+      <div className="mt-3 flex flex-wrap justify-between gap-2 text-xs font-bold text-slate-400">
+        <span>{statusText}</span>
+
+        {threshold !== null && (
+          <span>
+            Threshold:{" "}
+            {formatProbability(threshold)}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 

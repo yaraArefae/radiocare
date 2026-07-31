@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   FormEvent,
   useCallback,
@@ -7,14 +8,18 @@ import {
   useState,
 } from "react";
 
+import { getStatusStyle } from "@/components/AppointmentCalendar";
+
 type Appointment = {
   id: string;
   studyId?: string;
   study_id?: string;
   scheduledAt?: string;
   scheduled_at?: string;
+  durationMinutes?: number;
   status?: string;
   notes?: string | null;
+  patientResponseNote?: string | null;
 };
 
 type ChatMessage = {
@@ -220,7 +225,7 @@ export default function StudyAppointmentChat({
 
       setAppointment(data.appointment);
       setSuccessMessage(
-        "The follow-up appointment was scheduled successfully.",
+        "The appointment was sent to the patient and is waiting for their approval.",
       );
 
       setScheduledAt("");
@@ -373,9 +378,13 @@ export default function StudyAppointmentChat({
             </button>
           </form>
         ) : (
-          <div className="mt-6 rounded-3xl border border-emerald-300/30 bg-emerald-400/10 p-5">
-            <p className="text-sm font-bold uppercase tracking-wider text-emerald-200">
-              Scheduled
+          <div
+            className={`mt-6 rounded-3xl border p-5 ${
+              getStatusStyle(appointment.status ?? "Pending").chip
+            }`}
+          >
+            <p className="text-sm font-bold uppercase tracking-wider">
+              {appointment.status ?? "Pending"}
             </p>
 
             <p className="mt-3 text-xl font-black text-white">
@@ -386,10 +395,10 @@ export default function StudyAppointmentChat({
             </p>
 
             <p className="mt-2 text-sm text-slate-300">
-              Status:{" "}
-              <span className="font-bold text-cyan-200">
-                {appointment.status ?? "Scheduled"}
-              </span>
+              {getStatusStyle(appointment.status ?? "Pending").label}
+              {appointment.durationMinutes
+                ? ` · ${appointment.durationMinutes} minutes`
+                : ""}
             </p>
 
             {appointment.notes && (
@@ -397,6 +406,19 @@ export default function StudyAppointmentChat({
                 {appointment.notes}
               </p>
             )}
+
+            {appointment.patientResponseNote && (
+              <p className="mt-3 rounded-2xl border border-white/10 bg-black/10 p-4 leading-6 text-slate-200">
+                Patient reply: {appointment.patientResponseNote}
+              </p>
+            )}
+
+            <Link
+              href="/doctor/calendar"
+              className="mt-4 inline-flex rounded-2xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-bold text-white transition hover:bg-white/15"
+            >
+              Manage in calendar →
+            </Link>
           </div>
         )}
 

@@ -2,9 +2,21 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import AppointmentCalendar, {
+  formatTime,
+  getStatusStyle,
+  toDayKey,
+} from "@/components/AppointmentCalendar";
+import CaseChat from "@/components/CaseChat";
+import CaseReport from "@/components/CaseReport";
+import NotificationBell from "@/components/NotificationBell";
 import { authClient } from "@/client/auth/auth-client";
+
+const BACKEND_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL ??
+  "http://localhost:4000";
 
 type SessionUser = {
   name?: string | null;
@@ -16,12 +28,16 @@ type AppointmentItem = {
   id: string;
   studyId: string;
   scheduledAt: string;
+  durationMinutes: number;
   status: string;
   notes: string;
+  patientResponseNote: string;
   bodyRegion: string;
   priority: string;
   doctorName?: string;
   doctorId?: string;
+  doctorSpecialty?: string;
+  doctorWorkplace?: string;
 };
 
 type ChatMessage = {
@@ -30,6 +46,20 @@ type ChatMessage = {
   senderRole: "doctor" | "patient";
   message: string;
   createdAt: string;
+};
+
+type CaseThread = {
+  studyId: string;
+  bodyRegion: string;
+  imagingView: string;
+  priority: string;
+  createdAt: string;
+  isAbnormal: boolean;
+  primaryFinding: string | null;
+  lastMessage: string;
+  lastMessageRole: string;
+  lastMessageAt: string | null;
+  unreadCount: number;
 };
 
 function getAppointmentReminderText(scheduledAt: string) {
@@ -79,6 +109,36 @@ export default function PatientDashboardPage() {
   const [isLoadingChat, setIsLoadingChat] = useState(false);
   const [chatError, setChatError] = useState<string>("");
 
+  const [caseThreads, setCaseThreads] = useState<CaseThread[]>([]);
+  const [selectedCaseId, setSelectedCaseId] = useState<string>("");
+  const [isLoadingCases, setIsLoadingCases] = useState(true);
+
+  const [visibleMonth, setVisibleMonth] = useState(() => {
+    const today = new Date();
+    return new Date(today.getFullYear(), today.getMonth(), 1);
+  });
+  const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
+  const [respondingId, setRespondingId] = useState<string>("");
+  const [responseNote, setResponseNote] = useState<string>("");
+  const [appointmentMessage, setAppointmentMessage] = useState<string>("");
+  const [appointmentError, setAppointmentError] = useState<string>("");
+
+  const pendingAppointments = useMemo(
+    () =>
+      appointments.filter(
+        (appointment) => appointment.status === "Pending",
+      ),
+    [appointments],
+  );
+
+  const selectedDayAppointments = useMemo(() => {
+    const dayKey = toDayKey(selectedDate);
+
+    return appointments.filter(
+      (appointment) => toDayKey(appointment.scheduledAt) === dayKey,
+    );
+  }, [appointments, selectedDate]);
+
   useEffect(() => {
     if (!isPending && !session) {
       router.replace("/");
@@ -92,13 +152,44 @@ export default function PatientDashboardPage() {
 
     if (!isPending && session && isPatient) {
       void loadAppointments();
+      void loadCaseThreads();
     }
   }, [isPatient, isPending, router, session]);
+
+  async function loadCaseThreads() {
+    try {
+      setIsLoadingCases(true);
+
+      const response = await fetch(`${BACKEND_URL}/api/cases`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "Unable to load your cases.");
+      }
+
+      setCaseThreads(result.cases || []);
+    } catch (error) {
+      console.error("Unable to load patient cases:", error);
+      setCaseThreads([]);
+    } finally {
+      setIsLoadingCases(false);
+    }
+  }
 
   async function loadAppointments() {
     try {
       setIsLoadingAppointments(true);
-      const response = await fetch("/api/appointments");
+      const response = await fetch(
+        `${BACKEND_URL}/api/appointments`,
+        {
+          credentials: "include",
+          cache: "no-store",
+        },
+      );
       const result = await response.json();
 
       if (!response.ok) {
@@ -114,12 +205,67 @@ export default function PatientDashboardPage() {
     }
   }
 
+  async function respondToAppointment(
+    appointment: AppointmentItem,
+    action: "confirm" | "decline",
+  ) {
+    try {
+      setAppointmentError("");
+      setAppointmentMessage("");
+
+      const response = await fetch(
+        `${BACKEND_URL}/api/appointments/${encodeURIComponent(
+          appointment.id,
+        )}`,
+        {
+          method: "PATCH",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            responseNote:
+              respondingId === appointment.id ? responseNote.trim() : "",
+          }),
+        },
+      );
+
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        throw new Error(
+          result.message || "Unable to answer this appointment.",
+        );
+      }
+
+      setAppointmentMessage(
+        action === "confirm"
+          ? "You approved the appointment. Your doctor has been notified."
+          : "You declined the appointment. Your doctor will suggest another time.",
+      );
+
+      setRespondingId("");
+      setResponseNote("");
+
+      await loadAppointments();
+    } catch (error) {
+      setAppointmentError(
+        error instanceof Error
+          ? error.message
+          : "Unable to answer this appointment.",
+      );
+    }
+  }
+
   async function loadChatMessages(appointmentId: string) {
     try {
       setChatError("");
       setIsLoadingChat(true);
       const response = await fetch(
-        `/api/appointments/chat?appointmentId=${encodeURIComponent(appointmentId)}`,
+        `${BACKEND_URL}/api/appointments/chat?appointmentId=${encodeURIComponent(appointmentId)}`,
+        {
+          credentials: "include",
+          cache: "no-store",
+        },
       );
       const result = await response.json();
 
@@ -160,8 +306,9 @@ export default function PatientDashboardPage() {
       setChatError("");
       setIsLoadingChat(true);
 
-      const response = await fetch("/api/appointments/chat", {
+      const response = await fetch(`${BACKEND_URL}/api/appointments/chat`, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json",
         },
@@ -243,13 +390,17 @@ export default function PatientDashboardPage() {
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={handleSignOut}
-            className="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/15"
-          >
-            Sign out
-          </button>
+          <div className="flex items-center gap-3">
+            <NotificationBell />
+
+            <button
+              type="button"
+              onClick={handleSignOut}
+              className="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/15"
+            >
+              Sign out
+            </button>
+          </div>
         </div>
       </header>
 
@@ -266,8 +417,8 @@ export default function PatientDashboardPage() {
         </p>
 
         <div className="mt-8 grid gap-5 md:grid-cols-3">
-          <button
-            type="button"
+          <Link
+            href="/patients/upload"
             className="rounded-[26px] border border-cyan-300/25 bg-gradient-to-br from-blue-600/80 to-cyan-500/70 p-6 text-left shadow-[0_20px_60px_rgba(14,116,255,0.25)] transition hover:-translate-y-1"
           >
             <p className="text-sm font-semibold text-cyan-100">New analysis</p>
@@ -276,7 +427,7 @@ export default function PatientDashboardPage() {
               Start a new radiology study and submit an image for preliminary AI
               analysis.
             </p>
-          </button>
+          </Link>
 
           <div className="rounded-[26px] border border-white/15 bg-white/10 p-6 backdrop-blur-2xl">
             <p className="text-sm font-semibold text-cyan-200">My studies</p>
@@ -298,55 +449,333 @@ export default function PatientDashboardPage() {
           </div>
         </div>
 
+        {/* Private follow-up with the doctor for each reviewed case */}
         <section className="mt-8 rounded-[30px] border border-white/10 bg-white/10 p-6">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <p className="text-sm font-black uppercase tracking-[0.2em] text-cyan-200">
-                Upcoming review appointments
+                Follow up your case
               </p>
-              <h2 className="mt-2 text-3xl font-black">Your upcoming visits</h2>
+              <h2 className="mt-2 text-3xl font-black">
+                Messages with your doctor
+              </h2>
             </div>
-            <span className="rounded-full border border-cyan-300/20 bg-cyan-300/15 px-3 py-1 text-xs font-bold text-cyan-100">
-              {appointments.length} appointments
-            </span>
+
+            {caseThreads.some((item) => item.unreadCount > 0) && (
+              <span className="rounded-full border border-cyan-300/30 bg-cyan-400/15 px-3 py-1 text-xs font-bold text-cyan-100">
+                {caseThreads.reduce(
+                  (total, item) => total + item.unreadCount,
+                  0,
+                )}{" "}
+                new messages
+              </span>
+            )}
           </div>
+
+          {isLoadingCases ? (
+            <div className="mt-6 rounded-3xl border border-white/10 bg-white/10 p-6 text-slate-300">
+              Loading your cases...
+            </div>
+          ) : caseThreads.length === 0 ? (
+            <div className="mt-6 rounded-3xl border border-white/10 bg-white/10 p-6 text-slate-300">
+              No case needs a follow-up right now. When a scan needs a
+              doctor review, you can message them from here.
+            </div>
+          ) : (
+            <div className="mt-6 grid gap-6 xl:grid-cols-5">
+              <div className="flex flex-col gap-3 xl:col-span-2">
+                {caseThreads.map((caseThread) => (
+                  <button
+                    key={caseThread.studyId}
+                    type="button"
+                    onClick={() => setSelectedCaseId(caseThread.studyId)}
+                    className={[
+                      "rounded-3xl border p-4 text-left transition",
+                      selectedCaseId === caseThread.studyId
+                        ? "border-cyan-300/60 bg-cyan-400/15"
+                        : "border-white/10 bg-slate-950/80 hover:border-cyan-300/40",
+                    ].join(" ")}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="font-black text-white">
+                          {caseThread.bodyRegion}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-400">
+                          {new Date(
+                            caseThread.createdAt,
+                          ).toLocaleDateString()}{" "}
+                          · {caseThread.priority}
+                        </p>
+                      </div>
+
+                      <div className="flex shrink-0 flex-col items-end gap-1.5">
+                        {caseThread.isAbnormal && (
+                          <span className="rounded-full border border-rose-300/30 bg-rose-500/15 px-2.5 py-1 text-[11px] font-black text-rose-100">
+                            Needs review
+                          </span>
+                        )}
+
+                        {caseThread.unreadCount > 0 && (
+                          <span className="rounded-full bg-cyan-400 px-2 py-0.5 text-[11px] font-black text-blue-950">
+                            {caseThread.unreadCount}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <p className="mt-3 line-clamp-2 text-sm text-slate-300">
+                      {caseThread.lastMessage
+                        ? `${
+                            caseThread.lastMessageRole === "patient"
+                              ? "You: "
+                              : "Doctor: "
+                          }${caseThread.lastMessage}`
+                        : caseThread.primaryFinding
+                          ? `AI result: ${caseThread.primaryFinding}`
+                          : "No messages yet"}
+                    </p>
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex flex-col gap-5 xl:col-span-3">
+                {selectedCaseId ? (
+                  <>
+                    <CaseReport
+                      studyId={selectedCaseId}
+                      mode="patient"
+                    />
+
+                    <CaseChat studyId={selectedCaseId} />
+                  </>
+                ) : (
+                  <div className="flex h-full min-h-64 flex-col items-center justify-center rounded-3xl border border-dashed border-white/20 bg-white/[0.04] p-8 text-center">
+                    <span className="text-4xl">💬</span>
+                    <p className="mt-3 font-black text-white">
+                      Select a case
+                    </p>
+                    <p className="mt-2 max-w-xs text-sm leading-6 text-slate-400">
+                      Choose one of your scans to ask the doctor about it
+                      and read their answers.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="mt-8 rounded-[30px] border border-white/10 bg-white/10 p-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-black uppercase tracking-[0.2em] text-cyan-200">
+                Appointments from your doctor
+              </p>
+              <h2 className="mt-2 text-3xl font-black">Your visits calendar</h2>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {pendingAppointments.length > 0 && (
+                <span className="rounded-full border border-amber-300/30 bg-amber-400/15 px-3 py-1 text-xs font-bold text-amber-100">
+                  {pendingAppointments.length} waiting for your approval
+                </span>
+              )}
+              <span className="rounded-full border border-cyan-300/20 bg-cyan-300/15 px-3 py-1 text-xs font-bold text-cyan-100">
+                {appointments.length} appointments
+              </span>
+            </div>
+          </div>
+
+          {appointmentError && (
+            <div className="mt-5 rounded-2xl border border-red-300/30 bg-red-500/20 px-4 py-3 text-sm font-bold text-red-100">
+              {appointmentError}
+            </div>
+          )}
+
+          {appointmentMessage && (
+            <div className="mt-5 rounded-2xl border border-emerald-300/30 bg-emerald-400/15 px-4 py-3 text-sm font-bold text-emerald-100">
+              {appointmentMessage}
+            </div>
+          )}
+
+          {/* Appointments the doctor sent that still need an answer */}
+          {pendingAppointments.length > 0 && (
+            <div className="mt-6 rounded-3xl border border-amber-300/25 bg-amber-400/10 p-5">
+              <p className="text-sm font-black uppercase tracking-[0.2em] text-amber-200">
+                Approval needed
+              </p>
+
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                {pendingAppointments.map((appointment) => (
+                  <article
+                    key={appointment.id}
+                    className="rounded-3xl border border-white/10 bg-slate-950/80 p-5"
+                  >
+                    <h3 className="text-xl font-black text-white">
+                      {new Date(appointment.scheduledAt).toLocaleDateString(
+                        undefined,
+                        { weekday: "long", day: "numeric", month: "long" },
+                      )}
+                    </h3>
+
+                    <p className="mt-1 text-sm font-bold text-cyan-200">
+                      {formatTime(appointment.scheduledAt)} ·{" "}
+                      {appointment.durationMinutes} minutes
+                    </p>
+
+                    <p className="mt-3 text-sm text-slate-300">
+                      {appointment.doctorName ?? "Assigned doctor"}
+                      {appointment.doctorSpecialty
+                        ? ` — ${appointment.doctorSpecialty}`
+                        : ""}
+                    </p>
+
+                    <p className="mt-1 text-sm text-slate-400">
+                      {appointment.bodyRegion} • {appointment.priority}
+                    </p>
+
+                    {appointment.notes && (
+                      <p className="mt-3 rounded-2xl border border-white/10 bg-white/5 p-3 text-sm leading-6 text-slate-200">
+                        {appointment.notes}
+                      </p>
+                    )}
+
+                    {respondingId === appointment.id && (
+                      <textarea
+                        rows={2}
+                        value={responseNote}
+                        onChange={(event) =>
+                          setResponseNote(event.target.value)
+                        }
+                        placeholder="Optional note for your doctor..."
+                        className="mt-3 w-full resize-none rounded-2xl border border-white/20 bg-slate-900/80 px-4 py-3 text-sm text-white outline-none focus:border-cyan-300/60"
+                      />
+                    )}
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void respondToAppointment(appointment, "confirm")
+                        }
+                        className="rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-black text-emerald-950 transition hover:bg-emerald-300"
+                      >
+                        Approve appointment
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void respondToAppointment(appointment, "decline")
+                        }
+                        className="rounded-xl border border-rose-300/30 bg-rose-400/15 px-4 py-2.5 text-sm font-bold text-rose-100 transition hover:bg-rose-400/25"
+                      >
+                        Decline
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRespondingId(
+                            respondingId === appointment.id
+                              ? ""
+                              : appointment.id,
+                          );
+                          setResponseNote("");
+                        }}
+                        className="rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-bold text-slate-200 transition hover:bg-white/15"
+                      >
+                        {respondingId === appointment.id
+                          ? "Hide note"
+                          : "Add a note"}
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
 
           {isLoadingAppointments ? (
             <div className="mt-6 rounded-3xl border border-white/10 bg-white/10 p-6 text-slate-300">
               Loading your appointments...
             </div>
-          ) : appointments.length === 0 ? (
-            <div className="mt-6 rounded-3xl border border-white/10 bg-white/10 p-6 text-slate-300">
-              No appointments scheduled yet. Once a doctor sets a follow-up, it will appear here.
-            </div>
           ) : (
-            <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {appointments.map((appointment) => (
-                <button
-                  key={appointment.id}
-                  type="button"
-                  onClick={() => void selectAppointment(appointment)}
-                  className="rounded-3xl border border-white/10 bg-slate-950/80 p-5 text-left text-left transition hover:border-cyan-300/40"
-                >
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                    {appointment.status}
+            <div className="mt-6 grid gap-6 xl:grid-cols-3">
+              <div className="xl:col-span-2">
+                <AppointmentCalendar
+                  appointments={appointments.map((appointment) => ({
+                    id: appointment.id,
+                    scheduledAt: appointment.scheduledAt,
+                    status: appointment.status,
+                    title: appointment.doctorName ?? "Doctor",
+                  }))}
+                  visibleMonth={visibleMonth}
+                  selectedDate={selectedDate}
+                  onVisibleMonthChange={setVisibleMonth}
+                  onSelectDate={setSelectedDate}
+                />
+              </div>
+
+              <div className="rounded-3xl border border-white/15 bg-white/[0.07] p-6">
+                <p className="text-sm font-black uppercase tracking-[0.2em] text-cyan-200">
+                  Selected day
+                </p>
+
+                <h3 className="mt-2 text-2xl font-black text-white">
+                  {selectedDate.toLocaleDateString(undefined, {
+                    weekday: "long",
+                    day: "numeric",
+                    month: "long",
+                  })}
+                </h3>
+
+                {selectedDayAppointments.length === 0 ? (
+                  <p className="mt-5 rounded-2xl border border-dashed border-white/20 bg-white/[0.04] p-5 text-sm text-slate-300">
+                    Nothing scheduled on this day.
                   </p>
-                  <h3 className="mt-3 text-xl font-black text-white">
-                    {appointment.doctorName ?? "Assigned doctor"}
-                  </h3>
-                  <p className="mt-2 text-sm text-slate-300">
-                    Follow-up: {new Date(appointment.scheduledAt).toLocaleString()}
-                  </p>
-                  <p className="mt-3 text-sm text-slate-300">
-                    {appointment.bodyRegion} • {appointment.priority}
-                  </p>
-                  {appointment.notes && (
-                    <p className="mt-3 text-sm text-slate-300">
-                      {appointment.notes}
-                    </p>
-                  )}
-                </button>
-              ))}
+                ) : (
+                  <div className="mt-5 flex flex-col gap-3">
+                    {selectedDayAppointments.map((appointment) => {
+                      const style = getStatusStyle(appointment.status);
+
+                      return (
+                        <button
+                          key={appointment.id}
+                          type="button"
+                          onClick={() => void selectAppointment(appointment)}
+                          className="rounded-3xl border border-white/10 bg-slate-950/80 p-4 text-left transition hover:border-cyan-300/40"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="font-black text-white">
+                              {formatTime(appointment.scheduledAt)}
+                            </p>
+
+                            <span
+                              className={`rounded-full border px-2.5 py-1 text-[11px] font-black ${style.chip}`}
+                            >
+                              {appointment.status}
+                            </span>
+                          </div>
+
+                          <p className="mt-2 text-sm font-bold text-cyan-200">
+                            {appointment.doctorName ?? "Assigned doctor"}
+                          </p>
+
+                          <p className="mt-1 text-xs text-slate-400">
+                            {appointment.bodyRegion} • {appointment.priority}
+                          </p>
+
+                          <p className="mt-2 text-xs text-slate-400">
+                            {getStatusStyle(appointment.status).label} · tap to
+                            open the chat
+                          </p>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -408,7 +837,6 @@ export default function PatientDashboardPage() {
                   </div>
                 )}
               </div>
-              
 
               <div className="mt-6 rounded-3xl border border-white/10 bg-slate-950/90 p-5">
                 <label className="block text-sm font-semibold text-slate-200">
@@ -436,7 +864,6 @@ export default function PatientDashboardPage() {
                 </div>
               </div>
             </div>
-            
           )}
         </section>
 
@@ -459,30 +886,6 @@ export default function PatientDashboardPage() {
             and final reports will be shown in this section.
           </p>
         </div>
-        <div className="my-6">
-  <Link
-    href="/patients/upload"
-    className="group flex w-full max-w-xl items-center gap-5 rounded-3xl border border-white/20 bg-white/[0.08] p-6 shadow-lg backdrop-blur-2xl transition duration-300 hover:-translate-y-1 hover:border-cyan-300/50 hover:bg-white/[0.12]"
-  >
-    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-cyan-400 text-3xl shadow-lg">
-      🩻
-    </div>
-
-    <div className="min-w-0 flex-1">
-      <h2 className="text-xl font-black text-white">
-        Upload X-ray
-      </h2>
-
-      <p className="mt-1 text-sm leading-6 text-slate-300">
-        Upload a chest X-ray and receive a preliminary AI analysis.
-      </p>
-
-      <p className="mt-3 font-bold text-cyan-300 transition group-hover:text-cyan-200">
-        Upload and Analyze →
-      </p>
-    </div>
-  </Link>
-</div>
       </section>
     </main>
   );

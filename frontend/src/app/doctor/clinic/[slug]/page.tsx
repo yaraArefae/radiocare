@@ -1,8 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
+import ClinicAiStatus, {
+  useClinicCapabilities,
+} from "@/components/ClinicAiStatus";
+import NotificationBell from "@/components/NotificationBell";
 import { authClient } from "@/client/auth/auth-client";
 
 type ClinicInformation = {
@@ -11,7 +16,34 @@ type ClinicInformation = {
   description: string;
   icon: string;
   imageTypes: string[];
+  apiClinicKey: "chest" | "bone" | "neuro";
+  bodyRegionKeywords: string[];
 };
+
+type ClinicStudy = {
+  id: string;
+  patientId: string;
+  patient: string;
+  bodyRegion: string;
+  view: string;
+  date: string;
+  priority: string;
+  status: string;
+  createdAt: string;
+  clinicKey: string;
+  aiResult: string;
+  confidence: number | string | null;
+};
+
+type StudiesResponse = {
+  success: boolean;
+  studies?: ClinicStudy[];
+  message?: string;
+};
+
+const backendBaseUrl = (
+  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000"
+).replace(/\/$/, "");
 
 const clinicData: Record<string, ClinicInformation> = {
   chest: {
@@ -21,6 +53,8 @@ const clinicData: Record<string, ClinicInformation> = {
       "Manage chest imaging studies and review pneumonia and thoracic radiology cases.",
     icon: "🫁",
     imageTypes: ["Chest X-ray", "Pneumonia", "Thoracic Imaging"],
+    apiClinicKey: "chest",
+    bodyRegionKeywords: ["chest", "thorax", "thoracic", "lung"],
   },
 
   head: {
@@ -30,6 +64,8 @@ const clinicData: Record<string, ClinicInformation> = {
       "Manage head and skull radiology studies and review cranial imaging results.",
     icon: "🧠",
     imageTypes: ["Skull X-ray", "Head Imaging", "Cranial Studies"],
+    apiClinicKey: "neuro",
+    bodyRegionKeywords: ["head", "skull", "brain", "cranial"],
   },
 
   spine: {
@@ -39,6 +75,15 @@ const clinicData: Record<string, ClinicInformation> = {
       "Manage cervical, thoracic, lumbar spine, and scoliosis imaging studies.",
     icon: "🦴",
     imageTypes: ["Cervical Spine", "Lumbar Spine", "Scoliosis"],
+    apiClinicKey: "bone",
+    bodyRegionKeywords: [
+      "spine",
+      "cervical",
+      "thoracic spine",
+      "lumbar",
+      "scoliosis",
+      "vertebra",
+    ],
   },
 
   pelvis: {
@@ -48,6 +93,8 @@ const clinicData: Record<string, ClinicInformation> = {
       "Manage pelvic, hip, and developmental dysplasia imaging cases.",
     icon: "🩻",
     imageTypes: ["Pelvis X-ray", "Hip X-ray", "DDH"],
+    apiClinicKey: "bone",
+    bodyRegionKeywords: ["pelvis", "pelvic", "hip", "ddh"],
   },
 
   "upper-limb": {
@@ -57,6 +104,19 @@ const clinicData: Record<string, ClinicInformation> = {
       "Manage shoulder, elbow, wrist, hand, and upper-limb X-ray studies.",
     icon: "💪",
     imageTypes: ["Shoulder", "Arm", "Hand"],
+    apiClinicKey: "bone",
+    bodyRegionKeywords: [
+      "upper limb",
+      "shoulder",
+      "clavicle",
+      "humerus",
+      "arm",
+      "elbow",
+      "forearm",
+      "wrist",
+      "hand",
+      "finger",
+    ],
   },
 
   "lower-limb": {
@@ -66,6 +126,18 @@ const clinicData: Record<string, ClinicInformation> = {
       "Manage leg, knee, ankle, foot, and lower-limb radiology studies.",
     icon: "🦵",
     imageTypes: ["Leg", "Knee", "Foot"],
+    apiClinicKey: "bone",
+    bodyRegionKeywords: [
+      "lower limb",
+      "leg",
+      "femur",
+      "knee",
+      "tibia",
+      "fibula",
+      "ankle",
+      "foot",
+      "toe",
+    ],
   },
 };
 
@@ -100,11 +172,161 @@ const clinicActions = [
   },
 ];
 
+function normalizeText(value: unknown) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+/*
+  A case belongs in the review queue unless the AI cleared it as normal.
+  Regions that have no AI model yet report NOT_ANALYZED and still need
+  the doctor, so they stay in the queue too.
+*/
+function needsDoctorReview(study: ClinicStudy) {
+  const result = normalizeText(study.aiResult);
+
+  return result !== "normal";
+}
+
+function belongsToClinic(study: ClinicStudy, clinic: ClinicInformation) {
+  /*
+    Body regions arrive as HAND_WRIST or LOWER_LIMB, while the keywords
+    are written with spaces, so both sides are compared with spaces.
+  */
+  const region = normalizeText(study.bodyRegion).replace(/[_-]+/g, " ");
+
+  if (!region) {
+    return true;
+  }
+
+  return clinic.bodyRegionKeywords.some((keyword) =>
+    region.includes(keyword.toLowerCase().replace(/[_-]+/g, " ")),
+  );
+}
+
+function isCompletedStatus(status: string) {
+  const normalizedStatus = normalizeText(status);
+
+  return (
+    normalizedStatus.includes("completed") ||
+    normalizedStatus.includes("reviewed") ||
+    normalizedStatus.includes("approved")
+  );
+}
+
+function formatConfidence(value: ClinicStudy["confidence"]) {
+  if (value === null || value === undefined || value === "") {
+    return "—";
+  }
+
+  const parsedValue = Number(value);
+
+  if (!Number.isFinite(parsedValue)) {
+    return "—";
+  }
+
+  return `${parsedValue.toFixed(1)}%`;
+}
+
+function formatDate(value: string) {
+  if (!value) {
+    return "—";
+  }
+
+  const parsedDate = new Date(value);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return value;
+  }
+
+  return parsedDate.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 export default function ClinicDetailsPage() {
-  const router = useRouter();
   const params = useParams<{ slug: string }>();
   const slug = params?.slug;
   const clinic = clinicData[slug];
+
+  const { capabilities } = useClinicCapabilities();
+  const capability = capabilities[slug];
+
+  const [studies, setStudies] = useState<ClinicStudy[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const loadClinicStudies = useCallback(async () => {
+    if (!clinic) {
+      setStudies([]);
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    setErrorMessage("");
+
+    try {
+      const response = await fetch(
+        `${backendBaseUrl}/api/studies?clinic=${encodeURIComponent(
+          clinic.apiClinicKey,
+        )}`,
+        {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+        },
+      );
+
+      const result = (await response.json()) as StudiesResponse;
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.message || "Unable to load clinic studies.");
+      }
+
+      const clinicStudies = (result.studies ?? []).filter(
+        (study) => needsDoctorReview(study) && belongsToClinic(study, clinic),
+      );
+
+      setStudies(clinicStudies);
+    } catch (error) {
+      console.error("Load clinic studies failed:", error);
+      setStudies([]);
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to load clinic studies.",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [clinic]);
+
+  useEffect(() => {
+    void loadClinicStudies();
+  }, [loadClinicStudies]);
+
+  const statistics = useMemo(() => {
+    const assignedPatients = new Set(
+      studies.map((study) => study.patientId).filter(Boolean),
+    ).size;
+
+    const completedReports = studies.filter((study) =>
+      isCompletedStatus(study.status),
+    ).length;
+
+    const pendingStudies = studies.length - completedReports;
+
+    return {
+      assignedPatients,
+      pendingStudies,
+      completedReports,
+      aiReviewCases: studies.length,
+    };
+  }, [studies]);
 
   async function handleLogout() {
     try {
@@ -152,18 +374,44 @@ export default function ClinicDetailsPage() {
             <span>Back to Clinics</span>
           </Link>
 
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="inline-flex items-center justify-center rounded-2xl border border-red-300/30 bg-red-500/10 px-5 py-3 text-sm font-semibold text-red-100 transition hover:bg-red-500/20"
-          >
-            Logout
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <NotificationBell />
+
+            <Link
+              href="/doctor/messages"
+              className="inline-flex items-center justify-center rounded-2xl border border-cyan-300/30 bg-cyan-400/15 px-5 py-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/25"
+            >
+              💬 Case Messages
+            </Link>
+
+            <Link
+              href="/doctor/calendar"
+              className="inline-flex items-center justify-center rounded-2xl border border-cyan-300/30 bg-cyan-400/15 px-5 py-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/25"
+            >
+              📅 Appointments Calendar
+            </Link>
+
+            <button
+              type="button"
+              onClick={() => void loadClinicStudies()}
+              disabled={isLoading}
+              className="inline-flex items-center justify-center rounded-2xl border border-cyan-300/30 bg-cyan-400/10 px-5 py-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isLoading ? "Refreshing..." : "Refresh Cases"}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="inline-flex items-center justify-center rounded-2xl border border-red-300/30 bg-red-500/10 px-5 py-3 text-sm font-semibold text-red-100 transition hover:bg-red-500/20"
+            >
+              Logout
+            </button>
+          </div>
         </div>
 
         {/* Clinic heading */}
         <section className="relative overflow-hidden rounded-3xl border border-white/20 bg-white/[0.08] p-8 shadow-[0_25px_80px_rgba(0,0,0,0.35)] backdrop-blur-2xl md:p-10">
-          {/* Decorative lights */}
           <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl" />
           <div className="pointer-events-none absolute -bottom-24 left-1/3 h-64 w-64 rounded-full bg-blue-600/20 blur-3xl" />
 
@@ -205,20 +453,29 @@ export default function ClinicDetailsPage() {
               </div>
             </div>
 
-            {/* Clinic status */}
             <div className="min-w-52 rounded-3xl border border-white/20 bg-white/[0.08] p-6 text-center shadow-lg backdrop-blur-2xl">
               <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-400/15">
                 <span className="h-3 w-3 rounded-full bg-emerald-300 shadow-[0_0_18px_rgba(110,231,183,0.9)]" />
               </div>
 
               <p className="mt-4 text-sm font-semibold text-slate-300">
-                Clinic Status
+                AI support
               </p>
 
-              <p className="mt-1 text-xl font-black text-white">Active</p>
+              <p className="mt-1 text-xl font-black text-white">
+                {capability?.aiServed
+                  ? capability.tier === "high"
+                    ? "High accuracy"
+                    : capability.tier === "moderate"
+                      ? "Moderate"
+                      : "Limited"
+                  : "Doctor only"}
+              </p>
 
               <p className="mt-2 text-xs text-slate-400">
-                Ready to receive assigned studies
+                {capability?.aiServed
+                  ? "A preliminary AI result assists your reading"
+                  : "Every image is read by you from the start"}
               </p>
             </div>
           </div>
@@ -230,7 +487,9 @@ export default function ClinicDetailsPage() {
             <p className="text-sm font-semibold text-slate-400">
               Assigned Patients
             </p>
-            <p className="mt-2 text-3xl font-black text-white">0</p>
+            <p className="mt-2 text-3xl font-black text-white">
+              {isLoading ? "…" : statistics.assignedPatients}
+            </p>
             <p className="mt-1 text-xs text-cyan-200">Clinic patients</p>
           </article>
 
@@ -238,7 +497,9 @@ export default function ClinicDetailsPage() {
             <p className="text-sm font-semibold text-slate-400">
               Pending Studies
             </p>
-            <p className="mt-2 text-3xl font-black text-white">0</p>
+            <p className="mt-2 text-3xl font-black text-white">
+              {isLoading ? "…" : statistics.pendingStudies}
+            </p>
             <p className="mt-1 text-xs text-cyan-200">Waiting for review</p>
           </article>
 
@@ -246,7 +507,9 @@ export default function ClinicDetailsPage() {
             <p className="text-sm font-semibold text-slate-400">
               Completed Reports
             </p>
-            <p className="mt-2 text-3xl font-black text-white">0</p>
+            <p className="mt-2 text-3xl font-black text-white">
+              {isLoading ? "…" : statistics.completedReports}
+            </p>
             <p className="mt-1 text-xs text-cyan-200">Approved reports</p>
           </article>
 
@@ -254,9 +517,169 @@ export default function ClinicDetailsPage() {
             <p className="text-sm font-semibold text-slate-400">
               AI Review Cases
             </p>
-            <p className="mt-2 text-3xl font-black text-white">0</p>
-            <p className="mt-1 text-xs text-cyan-200">AI-assisted results</p>
+            <p className="mt-2 text-3xl font-black text-white">
+              {isLoading ? "…" : statistics.aiReviewCases}
+            </p>
+            <p className="mt-1 text-xs text-cyan-200">
+              Abnormal AI-assisted results
+            </p>
           </article>
+        </section>
+
+        {/* What the AI can and cannot do in this clinic */}
+        {capability && (
+          <section className="mt-7 rounded-3xl border border-white/15 bg-white/[0.07] p-6 shadow-lg backdrop-blur-2xl">
+            <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan-300">
+              AI capability
+            </p>
+
+            <h2 className="mt-2 text-2xl font-black text-white">
+              What the model can do here
+            </h2>
+
+            <div className="mt-4">
+              <ClinicAiStatus capability={capability} />
+            </div>
+
+            {capability.findings.length > 0 && (
+              <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {capability.findings.map((finding) => (
+                  <div
+                    key={finding.name}
+                    className="rounded-2xl border border-white/10 bg-white/[0.05] p-3"
+                  >
+                    <p className="text-sm font-bold text-white">
+                      {finding.name}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      {finding.scoreLabel} {finding.score.toFixed(3)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* Abnormal cases for this clinic only */}
+        <section className="mt-8 rounded-3xl border border-white/15 bg-white/[0.07] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.25)] backdrop-blur-2xl md:p-8">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan-300">
+                Doctor Review Queue
+              </p>
+              <h2 className="mt-2 text-2xl font-black text-white">
+                {clinic.name} Review Queue
+              </h2>
+              <p className="mt-2 text-slate-400">
+                Normal results are saved in the patient record and do not appear
+                in this clinic.
+              </p>
+            </div>
+
+            <Link
+              href={`/studies?clinic=${encodeURIComponent(slug)}`}
+              className="inline-flex items-center justify-center rounded-2xl border border-cyan-300/30 bg-cyan-400/15 px-5 py-3 text-sm font-bold text-cyan-100 transition hover:bg-cyan-400/25"
+            >
+              Open All Studies →
+            </Link>
+          </div>
+
+          {errorMessage ? (
+            <div className="mt-6 rounded-2xl border border-red-300/25 bg-red-500/10 p-5 text-red-100">
+              <p className="font-bold">Could not load clinic cases.</p>
+              <p className="mt-1 text-sm text-red-100/80">{errorMessage}</p>
+            </div>
+          ) : null}
+
+          {isLoading ? (
+            <div className="mt-6 grid gap-4 lg:grid-cols-2">
+              {[1, 2].map((item) => (
+                <div
+                  key={item}
+                  className="h-44 animate-pulse rounded-3xl border border-white/10 bg-white/[0.05]"
+                />
+              ))}
+            </div>
+          ) : studies.length === 0 && !errorMessage ? (
+            <div className="mt-6 rounded-3xl border border-dashed border-white/20 bg-white/[0.04] p-10 text-center">
+              <div className="text-5xl">✅</div>
+              <h3 className="mt-4 text-xl font-black text-white">
+                No cases are waiting
+              </h3>
+              <p className="mt-2 text-slate-400">
+                New studies assigned to this clinic will appear here.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-6 grid gap-4 lg:grid-cols-2">
+              {studies.map((study) => (
+                <article
+                  key={study.id}
+                  className="rounded-3xl border border-white/15 bg-white/[0.06] p-5 transition hover:border-cyan-300/35 hover:bg-white/[0.09]"
+                >
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.16em] text-cyan-300">
+                        {study.id}
+                      </p>
+                      <h3 className="mt-2 text-xl font-black text-white">
+                        {study.patient || "Unknown Patient"}
+                      </h3>
+                      <p className="mt-1 text-sm text-slate-400">
+                        Patient ID: {study.patientId || "—"}
+                      </p>
+                    </div>
+
+                    <span className="inline-flex w-fit rounded-full border border-red-300/30 bg-red-500/15 px-3 py-1.5 text-xs font-black text-red-100">
+                      {study.aiResult || "ABNORMAL"}
+                    </span>
+                  </div>
+
+                  <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-2xl bg-white/[0.05] p-3">
+                      <p className="text-xs text-slate-400">Body region</p>
+                      <p className="mt-1 font-bold text-white">
+                        {study.bodyRegion || "—"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-white/[0.05] p-3">
+                      <p className="text-xs text-slate-400">AI confidence</p>
+                      <p className="mt-1 font-bold text-white">
+                        {formatConfidence(study.confidence)}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-white/[0.05] p-3">
+                      <p className="text-xs text-slate-400">Priority</p>
+                      <p className="mt-1 font-bold text-white">
+                        {study.priority || "—"}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl bg-white/[0.05] p-3">
+                      <p className="text-xs text-slate-400">Uploaded</p>
+                      <p className="mt-1 font-bold text-white">
+                        {formatDate(study.createdAt || study.date)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 flex items-center justify-between gap-3">
+                    <span className="text-sm font-semibold text-slate-300">
+                      Status: {study.status || "Waiting"}
+                    </span>
+                    <Link
+                      href={`/studies?clinic=${encodeURIComponent(
+                        slug,
+                      )}&study=${encodeURIComponent(study.id)}`}
+                      className="rounded-xl border border-cyan-300/30 bg-cyan-400/15 px-4 py-2 text-sm font-bold text-cyan-100 transition hover:bg-cyan-400/25"
+                    >
+                      Review Case
+                    </Link>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* Clinic actions */}
@@ -279,7 +702,7 @@ export default function ClinicDetailsPage() {
             {clinicActions.map((action) => (
               <Link
                 key={action.title}
-                href={`${action.path}?clinic=${slug}`}
+                href={`${action.path}?clinic=${encodeURIComponent(slug)}`}
                 className="group flex min-h-64 flex-col rounded-3xl border border-white/20 bg-white/[0.07] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.25)] backdrop-blur-2xl transition duration-300 hover:-translate-y-2 hover:border-cyan-300/50 hover:bg-white/[0.11] hover:shadow-[0_25px_70px_rgba(14,165,233,0.22)]"
               >
                 <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/20 bg-gradient-to-br from-blue-600/60 via-sky-500/50 to-cyan-400/40 text-3xl shadow-lg backdrop-blur-xl transition group-hover:scale-110">
