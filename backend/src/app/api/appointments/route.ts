@@ -1,7 +1,17 @@
 import { randomUUID } from "node:crypto";
 
+import {
+  findConflictingAppointment,
+  formatDateTimeForSql,
+  normalizeDurationMinutes,
+} from "@/server/appointments/scheduling";
 import { auth } from "@/server/auth/auth";
+import { clinicKeyFromText } from "@/server/clinics/clinic-key";
 import { databaseReady, sql } from "@/server/database/database";
+import {
+  createNotification,
+  describeAppointmentTime,
+} from "@/server/notifications/notifications";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,17 +20,6 @@ type SessionUser = {
   id?: string;
   role?: string | string[] | null;
 };
-
-type ClinicKey =
-  | "chest"
-  | "bone"
-  | "neuro"
-  | "cardiac"
-  | "abdominal"
-  | "dental"
-  | "breast"
-  | "pediatric"
-  | "general";
 
 function normalizeRoles(
   role: SessionUser["role"]
@@ -34,88 +33,6 @@ function normalizeRoles(
     .filter(Boolean);
 }
 
-function clinicKeyFromText(value: string): ClinicKey {
-  const text = value.toLowerCase();
-
-  if (
-    text.includes("chest") ||
-    text.includes("lung") ||
-    text.includes("thoracic")
-  ) {
-    return "chest";
-  }
-
-  if (
-    text.includes("cardio") ||
-    text.includes("heart") ||
-    text.includes("cardiac")
-  ) {
-    return "cardiac";
-  }
-
-  if (
-    text.includes("bone") ||
-    text.includes("ortho") ||
-    text.includes("fracture") ||
-    text.includes("spine")
-  ) {
-    return "bone";
-  }
-
-  if (
-    text.includes("neuro") ||
-    text.includes("brain") ||
-    text.includes("head") ||
-    text.includes("skull")
-  ) {
-    return "neuro";
-  }
-
-  if (
-    text.includes("dental") ||
-    text.includes("teeth") ||
-    text.includes("jaw")
-  ) {
-    return "dental";
-  }
-
-  if (
-    text.includes("abdomen") ||
-    text.includes("abdominal") ||
-    text.includes("pelvis") ||
-    text.includes("kidney") ||
-    text.includes("liver")
-  ) {
-    return "abdominal";
-  }
-
-  if (
-    text.includes("breast") ||
-    text.includes("mammography")
-  ) {
-    return "breast";
-  }
-
-  if (
-    text.includes("pediatric") ||
-    text.includes("child")
-  ) {
-    return "pediatric";
-  }
-
-  return "general";
-}
-
-function formatDateTimeForSql(date: Date) {
-  const pad = (value: number) =>
-    String(value).padStart(2, "0");
-
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
-    date.getDate(),
-  )} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(
-    date.getSeconds(),
-  )}`;
-}
 
 export async function GET(request: Request) {
   try {
@@ -149,27 +66,70 @@ export async function GET(request: Request) {
 
     await databaseReady;
 
+    /*
+      The calendar only needs the visible month, so it may send
+      ?from=...&to=... to narrow the result down.
+    */
+    const { searchParams } = new URL(request.url);
+    const fromValue = searchParams.get("from");
+    const toValue = searchParams.get("to");
+
+    const rangeConditions: string[] = [];
+    const rangeValues: string[] = [];
+
+    if (fromValue) {
+      const fromDate = new Date(fromValue);
+
+      if (!Number.isNaN(fromDate.getTime())) {
+        rangeConditions.push("a.scheduled_at >= ?");
+        rangeValues.push(formatDateTimeForSql(fromDate));
+      }
+    }
+
+    if (toValue) {
+      const toDate = new Date(toValue);
+
+      if (!Number.isNaN(toDate.getTime())) {
+        rangeConditions.push("a.scheduled_at < ?");
+        rangeValues.push(formatDateTimeForSql(toDate));
+      }
+    }
+
+    const rangeClause =
+      rangeConditions.length > 0
+        ? ` AND ${rangeConditions.join(" AND ")}`
+        : "";
+
+    const sharedColumns = `a.id, a.study_id AS studyId, a.scheduled_at AS scheduledAt,
+         a.duration_minutes AS durationMinutes, a.status,
+         COALESCE(a.notes, '') AS notes,
+         COALESCE(a.patient_response_note, '') AS patientResponseNote,
+         a.patient_responded_at AS patientRespondedAt, a.created_at AS createdAt,
+         s.body_region AS bodyRegion, s.imaging_view AS imagingView, s.priority`;
+
     const query = isDoctor
-      ? `SELECT a.id, a.study_id AS studyId, a.scheduled_at AS scheduledAt,
-         a.status, COALESCE(a.notes, '') AS notes,
+      ? `SELECT ${sharedColumns},
          p.name AS patientName, p.id AS patientId,
-         s.body_region AS bodyRegion, s.priority
+         COALESCE(p.phone, '') AS patientPhone, p.age AS patientAge, p.gender AS patientGender
          FROM appointment a
          JOIN study s ON s.id = a.study_id
          JOIN patient p ON p.id = a.patient_id
-         WHERE a.doctor_id = ?
+         WHERE a.doctor_id = ?${rangeClause}
          ORDER BY a.scheduled_at ASC`
-      : `SELECT a.id, a.study_id AS studyId, a.scheduled_at AS scheduledAt,
-         a.status, COALESCE(a.notes, '') AS notes,
-         dp.full_name AS doctorName, dp.user_id AS doctorId,
-         s.body_region AS bodyRegion, s.priority
+      : `SELECT ${sharedColumns},
+         dp.full_name AS doctorName, a.doctor_id AS doctorId,
+         COALESCE(dp.specialty, '') AS doctorSpecialty,
+         COALESCE(dp.current_workplace, '') AS doctorWorkplace
          FROM appointment a
          JOIN study s ON s.id = a.study_id
          LEFT JOIN doctor_profile dp ON dp.user_id = a.doctor_id
-         WHERE a.patient_id = ?
+         WHERE a.patient_id = ?${rangeClause}
          ORDER BY a.scheduled_at ASC`;
 
-    const [appointmentsRows] = await sql.execute(query, [session.user?.id]);
+    const [appointmentsRows] = await sql.execute(query, [
+      session.user?.id,
+      ...rangeValues,
+    ]);
 
     return Response.json({
       success: true,
@@ -255,6 +215,20 @@ export async function POST(request: Request) {
       );
     }
 
+    if (scheduledAt.getTime() <= Date.now()) {
+      return Response.json(
+        {
+          success: false,
+          message: "The appointment must be scheduled in the future.",
+        },
+        { status: 400 },
+      );
+    }
+
+    const durationMinutes = normalizeDurationMinutes(
+      (body as any).durationMinutes,
+    );
+
     await databaseReady;
 
     const [doctorRows] = await sql.execute(
@@ -313,6 +287,24 @@ export async function POST(request: Request) {
       );
     }
 
+    const conflict = await findConflictingAppointment({
+      doctorId: String(session.user?.id),
+      startsAt: scheduledAt,
+      durationMinutes,
+    });
+
+    if (conflict) {
+      return Response.json(
+        {
+          success: false,
+          message:
+            "This time slot overlaps another appointment in your calendar.",
+          conflict,
+        },
+        { status: 409 },
+      );
+    }
+
     const appointmentId = `AP-${Date.now()}-${randomUUID()
       .slice(0, 6)
       .toUpperCase()}`;
@@ -321,17 +313,53 @@ export async function POST(request: Request) {
 
     await sql.execute(
       `INSERT INTO appointment
-       (id, study_id, patient_id, doctor_id, scheduled_at, status, notes)
-       VALUES (?, ?, ?, ?, ?, 'Scheduled', ?)`,
+       (id, study_id, patient_id, doctor_id, scheduled_at, duration_minutes, status, notes)
+       VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?)`,
       [
         appointmentId,
         studyId,
         study.patientId,
         session.user?.id,
         scheduledAtSql,
+        durationMinutes,
         notes || null,
       ],
     );
+
+    /*
+      The invitation is delivered to the patient through the private chat
+      as well, so they see it next to the doctor conversation.
+    */
+    await sql.execute(
+      `INSERT INTO chat_message (appointment_id, sender_id, sender_role, message)
+       VALUES (?, ?, 'doctor', ?)`,
+      [
+        appointmentId,
+        session.user?.id,
+        `Appointment invitation sent for ${scheduledAt.toISOString()} (${durationMinutes} minutes). Please approve or decline it from your dashboard.`,
+      ],
+    );
+
+    const [doctorNameRows] = await sql.execute(
+      "SELECT full_name AS fullName FROM doctor_profile WHERE user_id = ? LIMIT 1",
+      [session.user?.id],
+    );
+
+    const doctorName =
+      (doctorNameRows as any[])[0]?.fullName ?? "Your doctor";
+
+    await createNotification({
+      userId: study.patientId,
+      userRole: "patient",
+      type: "appointment_invitation",
+      title: "New appointment invitation",
+      body: `${doctorName} suggested an appointment on ${describeAppointmentTime(
+        scheduledAt,
+      )} UTC. Please approve or decline it.`,
+      link: "/patients/dashboard",
+      appointmentId,
+      studyId,
+    });
 
     return Response.json({
       success: true,
@@ -340,8 +368,9 @@ export async function POST(request: Request) {
         studyId,
         patientId: study.patientId,
         doctorId: session.user?.id,
-        scheduledAt: scheduledAtSql,
-        status: "Scheduled",
+        scheduledAt: scheduledAt.toISOString(),
+        durationMinutes,
+        status: "Pending",
         notes,
       },
     });

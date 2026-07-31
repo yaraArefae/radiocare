@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { auth } from "@/server/auth/auth";
 import { databaseReady, sql } from "@/server/database/database";
+import { resolveCaseAccess } from "@/server/messaging/case-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,6 +82,22 @@ export async function GET(
     const studyId = decodeURIComponent(id).trim();
 
     await databaseReady;
+
+    /*
+      The X-ray itself is patient data, so it follows the same access
+      rule as the study record.
+    */
+    const access = await resolveCaseAccess(session.user, studyId, {
+      allowAdmin: true,
+    });
+
+    if (!access.allowed) {
+      return Response.json(
+        { success: false, message: access.message },
+        { status: access.status },
+      );
+    }
+
     const [rows] = await sql.execute(
       `SELECT image_path AS imagePath, file_type AS fileType,
        original_file_name AS originalFileName FROM study WHERE id=? LIMIT 1`,

@@ -1,5 +1,6 @@
 import { auth } from "@/server/auth/auth";
 import { databaseReady, sql } from "@/server/database/database";
+import { resolveCaseAccess } from "@/server/messaging/case-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,6 +23,8 @@ type StudyRow = {
   imagingView: string;
   priority: string;
   clinicalNotes: string;
+  symptoms: string;
+  medicalHistory: string;
   originalFileName: string;
   fileType: string | null;
   fileSize: number | null;
@@ -75,11 +78,29 @@ export async function GET(
     }
 
     await databaseReady;
+
+    /*
+      A study may only be opened by its own patient, by a doctor of the
+      clinic that owns it, or by an administrator.
+    */
+    const access = await resolveCaseAccess(session.user, studyId, {
+      allowAdmin: true,
+    });
+
+    if (!access.allowed) {
+      return Response.json(
+        { success: false, message: access.message },
+        { status: access.status },
+      );
+    }
+
     const [rows] = await sql.execute(
       `SELECT s.id, s.patient_id AS patientId, p.name AS patientName,
        p.age, p.gender, COALESCE(p.phone,'') AS phone, COALESCE(p.email,'') AS email,
        s.body_region AS bodyRegion, s.imaging_view AS imagingView, s.priority,
        COALESCE(s.clinical_notes,'') AS clinicalNotes,
+       COALESCE(s.symptoms, p.symptoms, '') AS symptoms,
+       COALESCE(s.medical_history, p.medical_history, '') AS medicalHistory,
        s.original_file_name AS originalFileName, s.file_type AS fileType,
        s.file_size AS fileSize, s.status, s.clinic_key AS clinicKey, s.created_at AS createdAt,
        s.updated_at AS updatedAt,

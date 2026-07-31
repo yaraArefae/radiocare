@@ -1,4 +1,8 @@
 import { auth } from "@/server/auth/auth";
+import {
+  clinicKeyFromText,
+  type ClinicKey,
+} from "@/server/clinics/clinic-key";
 import { databaseReady, sql } from "@/server/database/database";
 
 export const runtime = "nodejs";
@@ -8,17 +12,6 @@ type SessionUser = {
   id?: string;
   role?: string | string[] | null;
 };
-
-type ClinicKey =
-  | "chest"
-  | "bone"
-  | "neuro"
-  | "cardiac"
-  | "abdominal"
-  | "dental"
-  | "breast"
-  | "pediatric"
-  | "general";
 
 const clinics: Array<{
   key: ClinicKey;
@@ -94,78 +87,6 @@ function normalizeRoles(
   return values
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
-}
-
-function clinicKeyFromText(value: string): ClinicKey {
-  const text = value.toLowerCase();
-
-  if (
-    text.includes("chest") ||
-    text.includes("lung") ||
-    text.includes("thoracic")
-  ) {
-    return "chest";
-  }
-
-  if (
-    text.includes("cardio") ||
-    text.includes("heart") ||
-    text.includes("cardiac")
-  ) {
-    return "cardiac";
-  }
-
-  if (
-    text.includes("bone") ||
-    text.includes("ortho") ||
-    text.includes("fracture") ||
-    text.includes("spine")
-  ) {
-    return "bone";
-  }
-
-  if (
-    text.includes("neuro") ||
-    text.includes("brain") ||
-    text.includes("head") ||
-    text.includes("skull")
-  ) {
-    return "neuro";
-  }
-
-  if (
-    text.includes("dental") ||
-    text.includes("teeth") ||
-    text.includes("jaw")
-  ) {
-    return "dental";
-  }
-
-  if (
-    text.includes("abdomen") ||
-    text.includes("abdominal") ||
-    text.includes("pelvis") ||
-    text.includes("kidney") ||
-    text.includes("liver")
-  ) {
-    return "abdominal";
-  }
-
-  if (
-    text.includes("breast") ||
-    text.includes("mammography")
-  ) {
-    return "breast";
-  }
-
-  if (
-    text.includes("pediatric") ||
-    text.includes("child")
-  ) {
-    return "pediatric";
-  }
-
-  return "general";
 }
 
 function getClinicDetails(key: ClinicKey) {

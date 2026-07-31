@@ -7,7 +7,15 @@ import {
 import path from "node:path";
 
 import { auth } from "@/server/auth/auth";
+import {
+  clinicKeyFromText,
+  type ClinicKey,
+} from "@/server/clinics/clinic-key";
 import { databaseReady, sql } from "@/server/database/database";
+import {
+  createNotifications,
+  type NewNotification,
+} from "@/server/notifications/notifications";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,16 +27,39 @@ type SessionUserWithRole = {
   role?: string | string[] | null;
 };
 
-type ClinicKey =
-  | "chest"
-  | "bone"
-  | "neuro"
-  | "cardiac"
-  | "abdominal"
-  | "dental"
-  | "breast"
-  | "pediatric"
-  | "general";
+type AiFinding = {
+  name: string;
+  probability: number;
+  threshold?: number;
+  detected?: boolean;
+  model?: string;
+};
+
+type AiDetailsPayload = {
+  schemaVersion: 2;
+  triageResult: string;
+  primaryFinding: string | null;
+  possibleFindings: AiFinding[];
+  allFindings: AiFinding[];
+  aiPriority: string;
+  detectedRegion: string;
+  detectedClinic: string;
+  message: string;
+};
+
+/*
+ * The three priorities the clinics work with, and every spelling the
+ * upload form or the AI service may send for them.
+ */
+const PRIORITY_ALIASES: Record<string, string> = {
+  urgent: "Urgent",
+  emergency: "Urgent",
+  "needs review": "Needs Review",
+  needs_review: "Needs Review",
+  needsreview: "Needs Review",
+  routine: "Routine",
+  normal: "Routine",
+};
 
 function getUserRoles(
   role: SessionUserWithRole["role"]
@@ -53,76 +84,99 @@ function getTextValue(
     : "";
 }
 
-function clinicKeyFromText(value: string): ClinicKey {
-  const text = value.toLowerCase();
+function getFindingArray(
+  formData: FormData,
+  fieldName: string
+): AiFinding[] {
+  const rawValue = getTextValue(
+    formData,
+    fieldName
+  );
 
-  if (
-    text.includes("chest") ||
-    text.includes("lung") ||
-    text.includes("thoracic")
-  ) {
-    return "chest";
+  if (!rawValue) {
+    return [];
   }
 
-  if (
-    text.includes("cardio") ||
-    text.includes("heart") ||
-    text.includes("cardiac")
-  ) {
-    return "cardiac";
-  }
+  try {
+    const parsedValue: unknown = JSON.parse(
+      rawValue
+    );
 
-  if (
-    text.includes("bone") ||
-    text.includes("ortho") ||
-    text.includes("fracture") ||
-    text.includes("spine")
-  ) {
-    return "bone";
-  }
+    if (!Array.isArray(parsedValue)) {
+      return [];
+    }
 
-  if (
-    text.includes("neuro") ||
-    text.includes("brain") ||
-    text.includes("head") ||
-    text.includes("skull")
-  ) {
-    return "neuro";
-  }
+    return parsedValue
+      .map((item): AiFinding | null => {
+        if (
+          typeof item !== "object" ||
+          item === null
+        ) {
+          return null;
+        }
 
-  if (
-    text.includes("dental") ||
-    text.includes("teeth") ||
-    text.includes("jaw")
-  ) {
-    return "dental";
-  }
+        const finding =
+          item as Record<string, unknown>;
 
-  if (
-    text.includes("abdomen") ||
-    text.includes("abdominal") ||
-    text.includes("pelvis") ||
-    text.includes("kidney") ||
-    text.includes("liver")
-  ) {
-    return "abdominal";
-  }
+        const name =
+          typeof finding.name === "string"
+            ? finding.name.trim()
+            : "";
 
-  if (
-    text.includes("breast") ||
-    text.includes("mammography")
-  ) {
-    return "breast";
-  }
+        const probability = Number(
+          finding.probability
+        );
 
-  if (
-    text.includes("pediatric") ||
-    text.includes("child")
-  ) {
-    return "pediatric";
-  }
+        if (
+          !name ||
+          !Number.isFinite(probability)
+        ) {
+          return null;
+        }
 
-  return "general";
+        const normalizedFinding: AiFinding = {
+          name,
+          probability: Math.min(
+            100,
+            Math.max(0, probability)
+          ),
+        };
+
+        const threshold = Number(
+          finding.threshold
+        );
+
+        if (Number.isFinite(threshold)) {
+          normalizedFinding.threshold = Math.min(
+            100,
+            Math.max(0, threshold)
+          );
+        }
+
+        if (
+          typeof finding.detected === "boolean"
+        ) {
+          normalizedFinding.detected =
+            finding.detected;
+        }
+
+        if (
+          typeof finding.model === "string" &&
+          finding.model.trim()
+        ) {
+          normalizedFinding.model =
+            finding.model.trim();
+        }
+
+        return normalizedFinding;
+      })
+      .filter(
+        (item): item is AiFinding =>
+          item !== null
+      );
+  } catch {
+    return [];
+  }
 }
 
 function getFileExtension(file: File) {
@@ -151,6 +205,76 @@ function getFileExtension(file: File) {
   }
 
   return "";
+}
+
+/*
+ * Tells the patient that their result is ready, and alerts every doctor
+ * whose specialty maps to the clinic of an abnormal study.
+ */
+async function notifyAboutNewStudy(study: {
+  studyId: string;
+  patientId: string;
+  patientName: string;
+  bodyRegion: string;
+  clinicKey: ClinicKey;
+  triageResult: string;
+  primaryFinding: string | null;
+}) {
+  const isAbnormal =
+    study.triageResult.trim().toUpperCase() === "ABNORMAL";
+
+  const notifications: NewNotification[] = [
+    {
+      userId: study.patientId,
+      userRole: "patient",
+      type: "new_case",
+      title: isAbnormal
+        ? "Your X-ray needs a doctor review"
+        : "Your X-ray analysis is ready",
+      body: isAbnormal
+        ? `The preliminary AI analysis of your ${study.bodyRegion} image found ${
+            study.primaryFinding || "a possible finding"
+          }. A doctor from the matching clinic will review it.`
+        : `The preliminary AI analysis of your ${study.bodyRegion} image did not detect an abnormality.`,
+      link: `/studies/${study.studyId}`,
+      studyId: study.studyId,
+    },
+  ];
+
+  if (isAbnormal) {
+    try {
+      const [doctorRows] = await sql.execute(
+        `SELECT dp.user_id AS userId, dp.specialty, dp.subspecialty
+         FROM doctor_profile dp
+         JOIN user u ON u.id = dp.user_id
+         WHERE dp.status = 'Active'`,
+      );
+
+      for (const doctor of doctorRows as any[]) {
+        const doctorClinicKey = clinicKeyFromText(
+          `${doctor.specialty} ${doctor.subspecialty || ""}`,
+        );
+
+        if (doctorClinicKey !== study.clinicKey) continue;
+
+        notifications.push({
+          userId: doctor.userId,
+          userRole: "doctor",
+          type: "new_case",
+          title: "New abnormal case in your clinic",
+          body: `${study.patientName} uploaded a ${study.bodyRegion} image. AI result: ${
+            study.primaryFinding || "abnormal"
+          }.`,
+          link: `/studies/${study.studyId}`,
+          studyId: study.studyId,
+        });
+      }
+    } catch (error) {
+      console.error("Unable to list clinic doctors:", error);
+    }
+  }
+
+  await createNotifications(notifications);
 }
 
 export async function POST(request: Request) {
@@ -223,6 +347,38 @@ export async function POST(request: Request) {
       formData,
       "aiExplanation"
     );
+
+    const triageResult = getTextValue(
+      formData,
+      "triageResult"
+    );
+
+    const primaryFinding =
+      getTextValue(
+        formData,
+        "primaryFinding"
+      ) || null;
+
+    const possibleFindings = getFindingArray(
+      formData,
+      "possibleFindings"
+    );
+
+    const allFindings = getFindingArray(
+      formData,
+      "allFindings"
+    );
+
+    const aiPriority =
+      getTextValue(
+        formData,
+        "aiPriority"
+      ) ||
+      (triageResult === "ABNORMAL"
+        ? "URGENT"
+        : triageResult === "UNCERTAIN"
+          ? "NEEDS_REVIEW"
+          : "ROUTINE");
 
     const confidence =
       confidenceText === ""
@@ -310,6 +466,20 @@ export async function POST(request: Request) {
       "clinicalNotes"
     );
 
+    /*
+     * What the patient feels now and what the doctor should know about
+     * their history. Both are shown to the reviewing doctor.
+     */
+    const symptoms = getTextValue(
+      formData,
+      "symptoms"
+    );
+
+    const medicalHistory = getTextValue(
+      formData,
+      "medicalHistory"
+    );
+
     const detectedRegion = getTextValue(
       formData,
       "detectedRegion"
@@ -380,14 +550,21 @@ export async function POST(request: Request) {
       );
     }
 
-    if (
-      priority !== "Normal" &&
-      priority !== "Urgent"
-    ) {
+    /*
+     * The AI service reports URGENT, NEEDS_REVIEW, or ROUTINE, while the
+     * upload form sends Normal or Urgent. Both spellings are accepted
+     * and stored as one of the three priorities the clinics use.
+     */
+    const normalizedPriority = PRIORITY_ALIASES[
+      priority.trim().toLowerCase()
+    ];
+
+    if (!normalizedPriority) {
       return Response.json(
         {
           success: false,
-          message: "Invalid priority value.",
+          message:
+            "Invalid priority value. Use Urgent, Needs Review, or Routine.",
         },
         {
           status: 400,
@@ -513,28 +690,78 @@ export async function POST(request: Request) {
 
     await databaseReady;
     await sql.execute(
-      `INSERT INTO patient (id, name, age, gender, status)
-       VALUES (?, ?, ?, ?, 'Active')
+      `INSERT INTO patient (id, name, age, gender, symptoms, medical_history, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'Active')
        ON DUPLICATE KEY UPDATE name=VALUES(name), age=VALUES(age),
-       gender=VALUES(gender), status='Active', updated_at=CURRENT_TIMESTAMP(3)`,
-      [patientId, patientName, age, gender],
+       gender=VALUES(gender),
+       symptoms=COALESCE(VALUES(symptoms), symptoms),
+       medical_history=COALESCE(VALUES(medical_history), medical_history),
+       status='Active', updated_at=CURRENT_TIMESTAMP(3)`,
+      [
+        patientId,
+        patientName,
+        age,
+        gender,
+        symptoms || null,
+        medicalHistory || null,
+      ],
     );
     const clinicKey = clinicKeyFromText(
       detectedRegion || detectedClinic || bodyRegion,
     );
 
+    /*
+     * A case the AI could not clear goes straight into the review queue,
+     * anything else waits for the doctor in the normal order.
+     */
+    const needsDoctorReview = [
+      "ABNORMAL",
+      "UNCERTAIN",
+      "NOT_ANALYZED",
+    ].includes(String(triageResult || "").trim().toUpperCase());
+
+    const studyStatus = needsDoctorReview
+      ? "Needs Review"
+      : normalizedPriority === "Urgent"
+        ? "Urgent"
+        : "Waiting";
+
     await sql.execute(
       `INSERT INTO study
        (id, patient_id, body_region, imaging_view, priority, clinical_notes,
+        symptoms, medical_history,
         image_path, original_file_name, file_type, file_size, status, uploaded_by, clinic_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [studyId, patientId, bodyRegion, imagingView, priority,
-        clinicalNotes || null, relativeFilePath, imageFile.name,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [studyId, patientId, bodyRegion, imagingView, normalizedPriority,
+        clinicalNotes || null, symptoms || null, medicalHistory || null,
+        relativeFilePath, imageFile.name,
         imageFile.type || (isDicom ? "application/dicom" : null),
-        imageFile.size, priority === "Urgent" ? "Urgent" : "Waiting",
+        imageFile.size, studyStatus,
         sessionUser.id, clinicKey],
     );
-    if (predictedFinding) {
+    const savedPredictedFinding =
+      predictedFinding ||
+      primaryFinding ||
+      triageResult;
+
+    const aiDetails: AiDetailsPayload = {
+      schemaVersion: 2,
+      triageResult:
+        triageResult ||
+        savedPredictedFinding ||
+        "NOT_ANALYZED",
+      primaryFinding,
+      possibleFindings,
+      allFindings,
+      aiPriority,
+      detectedRegion:
+        detectedRegion || bodyRegion,
+      detectedClinic:
+        detectedClinic || clinicKey,
+      message: aiExplanation,
+    };
+
+    if (savedPredictedFinding) {
       await sql.execute(
         `
           INSERT INTO ai_result
@@ -556,14 +783,25 @@ export async function POST(request: Request) {
         `,
         [
           studyId,
-          predictedFinding,
+          savedPredictedFinding,
           confidence,
           modelName,
           modelVersion,
-          aiExplanation || null,
+          JSON.stringify(aiDetails),
         ]
       );
     }
+
+    await notifyAboutNewStudy({
+      studyId,
+      patientId,
+      patientName,
+      bodyRegion,
+      clinicKey,
+      triageResult: aiDetails.triageResult,
+      primaryFinding:
+        aiDetails.primaryFinding || savedPredictedFinding,
+    });
 
     return Response.json(
       {
@@ -575,14 +813,26 @@ export async function POST(request: Request) {
           patientId,
           bodyRegion,
           imagingView,
-          priority,
-          status:
-            priority === "Urgent"
-              ? "Urgent"
-              : "Waiting",
-          aiResult: predictedFinding
+          priority: normalizedPriority,
+          status: studyStatus,
+          aiResult: savedPredictedFinding
             ? {
-                predictedFinding,
+                predictedFinding:
+                  savedPredictedFinding,
+                triageResult:
+                  aiDetails.triageResult,
+                primaryFinding:
+                  aiDetails.primaryFinding,
+                possibleFindings:
+                  aiDetails.possibleFindings,
+                allFindings:
+                  aiDetails.allFindings,
+                aiPriority:
+                  aiDetails.aiPriority,
+                detectedRegion:
+                  aiDetails.detectedRegion,
+                detectedClinic:
+                  aiDetails.detectedClinic,
                 confidence,
                 modelName,
                 modelVersion,
@@ -638,18 +888,158 @@ export async function GET(request: Request) {
       );
     }
 
+    /*
+     * The doctor clinic page calls:
+     *   /studies?clinic=chest
+     *
+     * When a clinic is supplied, return the studies of that clinic that
+     * still need a doctor: an abnormal result, an uncertain one, or a
+     * region that has no AI model yet. Only clearly normal studies stay
+     * out of the queue. Requests without a clinic keep returning all
+     * studies, so the patient/admin study pages continue to work.
+     */
+    const { searchParams } = new URL(request.url);
+    const clinic = searchParams
+      .get("clinic")
+      ?.trim()
+      .toLowerCase();
+
+    const whereConditions: string[] = [];
+    const queryValues: string[] = [];
+
     await databaseReady;
-    const [result] = await sql.query(
-      `SELECT s.id, s.patient_id AS patientId, p.name AS patient,
-       s.body_region AS bodyRegion, s.imaging_view AS view,
-       DATE(s.created_at) AS date, s.priority, s.status,
-       s.created_at AS createdAt, s.clinic_key AS clinicKey,
-       COALESCE(a.predicted_finding, 'Not analyzed yet') AS aiResult,
-       a.confidence
-       FROM study s JOIN patient p ON p.id=s.patient_id
-       LEFT JOIN ai_result a ON a.study_id=s.id
-       ORDER BY s.created_at DESC`,
+
+    /*
+     * Studies are patient data, so the list is always limited to what
+     * the signed in user is allowed to see: a patient sees only their
+     * own studies, a doctor only the studies of their own clinic, and
+     * an administrator sees all of them.
+     */
+    const sessionRoles = getUserRoles(
+      (session.user as SessionUserWithRole).role
     );
+
+    if (!sessionRoles.includes("admin")) {
+      if (sessionRoles.includes("doctor")) {
+        const [profileRows] = await sql.execute(
+          `SELECT specialty, subspecialty
+           FROM doctor_profile
+           WHERE user_id = ?
+           LIMIT 1`,
+          [String(session.user?.id ?? "")]
+        );
+
+        const profile = (profileRows as any[])[0];
+
+        if (!profile) {
+          return Response.json(
+            {
+              success: false,
+              message:
+                "Doctor profile not found or not approved yet.",
+            },
+            {
+              status: 404,
+            }
+          );
+        }
+
+        whereConditions.push(
+          "LOWER(TRIM(s.clinic_key)) = ?"
+        );
+        queryValues.push(
+          clinicKeyFromText(
+            `${profile.specialty} ${profile.subspecialty || ""}`
+          )
+        );
+      } else if (sessionRoles.includes("patient")) {
+        whereConditions.push("s.patient_id = ?");
+        queryValues.push(String(session.user?.id ?? ""));
+      } else {
+        return Response.json(
+          {
+            success: false,
+            message:
+              "You do not have permission to list studies.",
+          },
+          {
+            status: 403,
+          }
+        );
+      }
+    }
+
+    if (clinic) {
+      whereConditions.push(
+        "LOWER(TRIM(s.clinic_key)) = ?"
+      );
+      queryValues.push(clinic);
+
+      /*
+       * New records store the triage result inside the JSON explanation.
+       * The predicted_finding fallback keeps older ABNORMAL records working.
+       */
+      whereConditions.push(
+        `UPPER(TRIM(COALESCE(
+          CASE
+            WHEN JSON_VALID(a.explanation)
+            THEN JSON_UNQUOTE(
+              JSON_EXTRACT(
+                a.explanation,
+                '$.triageResult'
+              )
+            )
+            ELSE NULL
+          END,
+          a.predicted_finding,
+          'NOT_ANALYZED'
+        ))) <> 'NORMAL'`
+      );
+    }
+
+    const whereClause =
+      whereConditions.length > 0
+        ? `WHERE ${whereConditions.join(" AND ")}`
+        : "";
+
+    const [result] = await sql.query(
+      `SELECT
+         s.id,
+         s.patient_id AS patientId,
+         p.name AS patient,
+         s.body_region AS bodyRegion,
+         s.imaging_view AS view,
+         DATE(s.created_at) AS date,
+         s.priority,
+         s.status,
+         s.created_at AS createdAt,
+         s.clinic_key AS clinicKey,
+         COALESCE(
+           CASE
+             WHEN JSON_VALID(a.explanation)
+             THEN JSON_UNQUOTE(
+               JSON_EXTRACT(
+                 a.explanation,
+                 '$.triageResult'
+               )
+             )
+             ELSE NULL
+           END,
+           a.predicted_finding,
+           'Not analyzed yet'
+         ) AS aiResult,
+         a.predicted_finding AS primaryFinding,
+         a.confidence
+       FROM study s
+       JOIN patient p
+         ON p.id = s.patient_id
+       LEFT JOIN ai_result a
+         ON a.study_id = s.id
+       ${whereClause}
+       ORDER BY s.created_at DESC`,
+      queryValues
+    );
+
     const studies = result;
 
     return Response.json({

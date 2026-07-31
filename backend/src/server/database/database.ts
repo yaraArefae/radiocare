@@ -44,6 +44,27 @@ export const authDatabase = {
   type: "mysql" as const,
 };
 
+/*
+  MySQL does not support "ADD COLUMN IF NOT EXISTS", so we look the
+  column up first and only run the ALTER statement when it is missing.
+*/
+async function addColumnWhenMissing(
+  tableName: string,
+  columnName: string,
+  columnDefinition: string,
+) {
+  const [columns] = await sql.query(
+    `SHOW COLUMNS FROM \`${tableName}\` LIKE ?`,
+    [columnName],
+  );
+
+  if ((columns as unknown[]).length > 0) return;
+
+  await sql.query(
+    `ALTER TABLE \`${tableName}\` ADD COLUMN \`${columnName}\` ${columnDefinition}`,
+  );
+}
+
 async function initializeDatabase() {
   const statements = [
     `CREATE TABLE IF NOT EXISTS user (
@@ -112,8 +133,22 @@ async function initializeDatabase() {
     `CREATE TABLE IF NOT EXISTS patient (
       id VARCHAR(64) PRIMARY KEY, name VARCHAR(255) NOT NULL, age INT NOT NULL,
       gender VARCHAR(20) NOT NULL, phone VARCHAR(100) NULL, email VARCHAR(255) NULL,
+      symptoms TEXT NULL, medical_history TEXT NULL,
       status VARCHAR(30) NOT NULL DEFAULT 'Active', created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
       updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    ) ENGINE=InnoDB`,
+    `CREATE TABLE IF NOT EXISTS patient_application (
+      id VARCHAR(64) PRIMARY KEY, full_name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) NOT NULL UNIQUE, phone VARCHAR(100) NULL,
+      age INT NOT NULL, gender VARCHAR(20) NOT NULL,
+      national_id VARCHAR(100) NULL, symptoms TEXT NULL, medical_history TEXT NULL,
+      status VARCHAR(30) NOT NULL DEFAULT 'Pending', admin_notes TEXT NULL,
+      rejection_reason TEXT NULL, reviewed_by VARCHAR(64) NULL, reviewed_at DATETIME(3) NULL,
+      approved_user_id VARCHAR(64) NULL, login_email VARCHAR(255) NULL,
+      temporary_password_issued_at DATETIME(3) NULL, temporary_password_expires_at DATETIME(3) NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      INDEX idx_patient_application_status (status, created_at)
     ) ENGINE=InnoDB`,
     `CREATE TABLE IF NOT EXISTS study (
       id VARCHAR(64) PRIMARY KEY, patient_id VARCHAR(64) NOT NULL, body_region VARCHAR(100) NOT NULL,
@@ -134,6 +169,9 @@ async function initializeDatabase() {
     `CREATE TABLE IF NOT EXISTS report (
       id VARCHAR(64) PRIMARY KEY, study_id VARCHAR(64) NOT NULL UNIQUE, radiologist_id VARCHAR(64) NULL,
       findings TEXT NULL, impression TEXT NULL, recommendations TEXT NULL, status VARCHAR(30) NOT NULL DEFAULT 'Draft',
+      ai_agreement VARCHAR(30) NULL, final_finding VARCHAR(255) NULL,
+      severity VARCHAR(30) NULL, follow_up_required BOOLEAN NOT NULL DEFAULT FALSE,
+      additional_tests TEXT NULL, doctor_notes TEXT NULL,
       approved_at DATETIME(3) NULL, created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
       updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
     ) ENGINE=InnoDB`,
@@ -141,13 +179,42 @@ async function initializeDatabase() {
     `CREATE TABLE IF NOT EXISTS appointment (
       id VARCHAR(64) PRIMARY KEY, study_id VARCHAR(64) NOT NULL,
       patient_id VARCHAR(64) NOT NULL, doctor_id VARCHAR(64) NOT NULL,
-      scheduled_at DATETIME(3) NOT NULL, status VARCHAR(30) NOT NULL DEFAULT 'Scheduled',
-      notes TEXT NULL, created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      scheduled_at DATETIME(3) NOT NULL, status VARCHAR(30) NOT NULL DEFAULT 'Pending',
+      notes TEXT NULL, duration_minutes INT NOT NULL DEFAULT 30,
+      patient_response_note TEXT NULL, patient_responded_at DATETIME(3) NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
       updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
       INDEX idx_appointment_doctor (doctor_id), INDEX idx_appointment_study (study_id),
+      INDEX idx_appointment_patient_time (patient_id, scheduled_at),
       CONSTRAINT fk_appointment_study FOREIGN KEY (study_id) REFERENCES study(id),
       CONSTRAINT fk_appointment_patient FOREIGN KEY (patient_id) REFERENCES patient(id),
       CONSTRAINT fk_appointment_doctor FOREIGN KEY (doctor_id) REFERENCES user(id)
+    ) ENGINE=InnoDB`,
+    `CREATE TABLE IF NOT EXISTS case_message (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      study_id VARCHAR(64) NOT NULL,
+      sender_id VARCHAR(64) NOT NULL,
+      sender_role VARCHAR(30) NOT NULL,
+      message TEXT NOT NULL,
+      is_read BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      INDEX idx_case_message_study (study_id, created_at),
+      CONSTRAINT fk_case_message_study FOREIGN KEY (study_id) REFERENCES study(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB`,
+    `CREATE TABLE IF NOT EXISTS notification (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      user_role VARCHAR(30) NOT NULL DEFAULT 'patient',
+      type VARCHAR(50) NOT NULL,
+      title VARCHAR(255) NOT NULL,
+      body TEXT NULL,
+      link VARCHAR(255) NULL,
+      appointment_id VARCHAR(64) NULL,
+      study_id VARCHAR(64) NULL,
+      is_read BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      INDEX idx_notification_user (user_id, is_read, created_at),
+      CONSTRAINT fk_notification_user FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE
     ) ENGINE=InnoDB`,
     `CREATE TABLE IF NOT EXISTS chat_message (
       id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -173,9 +240,74 @@ async function initializeDatabase() {
     );
   }
 
+  /*
+    Older databases already have an appointment table without the
+    calendar columns, so we add them one by one when they are missing.
+  */
+  await addColumnWhenMissing(
+    "appointment",
+    "duration_minutes",
+    "INT NOT NULL DEFAULT 30",
+  );
+
+  /*
+    Clinical intake written by the patient, and the fields the doctor
+    fills when they take the final decision on a study.
+  */
+  await addColumnWhenMissing("patient", "symptoms", "TEXT NULL");
+  await addColumnWhenMissing("patient", "medical_history", "TEXT NULL");
+  await addColumnWhenMissing("study", "symptoms", "TEXT NULL");
+  await addColumnWhenMissing("study", "medical_history", "TEXT NULL");
+  await addColumnWhenMissing("report", "ai_agreement", "VARCHAR(30) NULL");
+  await addColumnWhenMissing("report", "final_finding", "VARCHAR(255) NULL");
+  await addColumnWhenMissing("report", "severity", "VARCHAR(30) NULL");
+  await addColumnWhenMissing(
+    "report",
+    "follow_up_required",
+    "BOOLEAN NOT NULL DEFAULT FALSE",
+  );
+  await addColumnWhenMissing("report", "additional_tests", "TEXT NULL");
+  await addColumnWhenMissing("report", "doctor_notes", "TEXT NULL");
+  await addColumnWhenMissing(
+    "doctor_profile",
+    "availability",
+    "JSON NULL",
+  );
+  await addColumnWhenMissing(
+    "appointment",
+    "patient_response_note",
+    "TEXT NULL",
+  );
+  await addColumnWhenMissing(
+    "appointment",
+    "patient_responded_at",
+    "DATETIME(3) NULL",
+  );
+
+  /*
+    The old flow created appointments as "Scheduled" without asking the
+    patient. They now start as "Pending" until the patient approves them.
+  */
+  await sql.query(
+    "ALTER TABLE appointment ALTER COLUMN status SET DEFAULT 'Pending'",
+  );
+
+  await sql.execute(
+    "UPDATE appointment SET status = 'Pending' WHERE status = 'Scheduled'",
+  );
+
   const seedUsers = [
     { name: "RadioCare Admin", email: "admin@radiocare.com", role: "admin" },
     { name: "RadioCare Doctor", email: "doctor@radiocare.com", role: "doctor" },
+    /*
+      A second demo doctor covers the orthopedic clinic. Without one, any
+      bone, hand, wrist, or limb case has no doctor to reach.
+    */
+    {
+      name: "RadioCare Orthopedic Doctor",
+      email: "doctor.ortho@radiocare.com",
+      role: "doctor",
+    },
     { name: "RadioCare Patient", email: "patient@radiocare.com", role: "patient" },
   ];
   const password = await hashPassword("RadioCare@2026");
@@ -194,6 +326,67 @@ const userId = crypto.randomUUID();    const now = new Date();
       `INSERT INTO account (id,accountId,providerId,userId,password,createdAt,updatedAt)
        VALUES (?,?, 'credential', ?,?,?,?)`,
       [crypto.randomUUID(), userId, userId, password, now, now],
+    );
+  }
+
+  /*
+    A doctor account without a doctor_profile cannot open any clinic
+    screen: the review queue, the calendar, and the case messages all
+    look the doctor up by their specialty. The demo doctor therefore
+    also gets a profile, so the account works right after the seed.
+  */
+  const demoDoctorProfiles = [
+    {
+      email: "doctor@radiocare.com",
+      fullName: "RadioCare Chest Doctor",
+      specialty: "Chest Radiology",
+    },
+    {
+      email: "doctor.ortho@radiocare.com",
+      fullName: "RadioCare Orthopedic Doctor",
+      specialty: "Orthopedics / Bone Imaging",
+    },
+  ];
+
+  for (const demoDoctor of demoDoctorProfiles) {
+    const [userRows] = await sql.execute(
+      "SELECT id FROM `user` WHERE email = ? LIMIT 1",
+      [demoDoctor.email],
+    );
+
+    const doctorUserId = (userRows as { id: string }[])[0]?.id;
+
+    if (!doctorUserId) continue;
+
+    const [profileRows] = await sql.execute(
+      "SELECT id FROM doctor_profile WHERE user_id = ? LIMIT 1",
+      [doctorUserId],
+    );
+
+    if ((profileRows as unknown[]).length > 0) continue;
+
+    await sql.execute(
+      `INSERT INTO doctor_profile
+       (id, user_id, full_name, phone, specialty, subspecialty,
+        license_number, licensing_authority, license_expiry_date,
+        years_of_experience, current_workplace,
+        supported_imaging_types, supported_body_regions, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'Active')`,
+      [
+        `DOC-${crypto.randomUUID()}`,
+        doctorUserId,
+        demoDoctor.fullName,
+        "0000000000",
+        demoDoctor.specialty,
+        null,
+        `LIC-DEMO-${doctorUserId.slice(0, 8)}`,
+        "RadioCare Demo Authority",
+        "2030-01-01",
+        5,
+        "RadioCare Clinic",
+        JSON.stringify([]),
+        JSON.stringify([]),
+      ],
     );
   }
 }

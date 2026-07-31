@@ -1,5 +1,6 @@
 import { auth } from "@/server/auth/auth";
 import { databaseReady, sql } from "@/server/database/database";
+import { createNotification } from "@/server/notifications/notifications";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -150,7 +151,7 @@ export async function POST(request: Request) {
     await databaseReady;
 
     const [appointmentRows] = await sql.execute(
-      `SELECT doctor_id AS doctorId, patient_id AS patientId
+      `SELECT doctor_id AS doctorId, patient_id AS patientId, study_id AS studyId
        FROM appointment
        WHERE id = ?
        LIMIT 1`,
@@ -189,6 +190,25 @@ export async function POST(request: Request) {
     );
 
     const insertId = (insertResult as any).insertId;
+
+    /*
+      The other side of the conversation gets a notification so they do
+      not have to keep the chat open to notice new messages.
+    */
+    const isFromDoctor = senderRole === "doctor";
+
+    await createNotification({
+      userId: isFromDoctor ? appointment.patientId : appointment.doctorId,
+      userRole: isFromDoctor ? "patient" : "doctor",
+      type: "chat_message",
+      title: isFromDoctor
+        ? "New message from your doctor"
+        : `New message from ${session.user?.name ?? "your patient"}`,
+      body: message.slice(0, 300),
+      link: isFromDoctor ? "/patients/dashboard" : "/doctor/calendar",
+      appointmentId,
+      studyId: appointment.studyId,
+    });
 
     return Response.json({
       success: true,
