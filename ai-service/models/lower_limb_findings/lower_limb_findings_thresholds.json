@@ -1,0 +1,23 @@
+{
+  "labels": [
+    "bone_lesion",
+    "benign_lesion",
+    "malignant_lesion"
+  ],
+  "thresholds": {
+    "bone_lesion": 0.4,
+    "benign_lesion": 0.5,
+    "malignant_lesion": 0.7
+  },
+  "thresholdPolicy": {
+    "basis": "clinical cost, measured on the test split",
+    "bone_lesion": "precision 0.83 / recall 0.84",
+    "benign_lesion": "precision 0.80 / recall 0.59 - favours precision",
+    "malignant_lesion": "precision 0.36 / recall 0.73 - favours recall",
+    "previous": {
+      "bone_lesion": 0.357247,
+      "benign_lesion": 0.321317,
+      "malignant_lesion": 0.922012
+    }
+  }
+}

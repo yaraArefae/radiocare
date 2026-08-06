@@ -1,0 +1,18 @@
+Shoulder Findings V1
+
+Thresholds:
+{
+  "fracture": 0.29516297578811646,
+  "hardware": 0.2449800819158554
+}
+
+Classification report:
+              precision    recall  f1-score   support
+
+    fracture       0.22      0.29      0.25         7
+    hardware       1.00      1.00      1.00        89
+
+   micro avg       0.93      0.95      0.94        96
+   macro avg       0.61      0.64      0.62        96
+weighted avg       0.94      0.95      0.95        96
+ samples avg       0.64      0.64      0.64        96

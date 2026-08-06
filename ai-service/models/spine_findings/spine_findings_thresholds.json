@@ -1,0 +1,18 @@
+{
+  "labels": [
+    "loss_of_lordosis",
+    "sigmoid_curvature",
+    "cervical_kyphosis"
+  ],
+  "thresholds": {
+    "loss_of_lordosis": 0.36013585329055786,
+    "sigmoid_curvature": 0.5240515470504761,
+    "cervical_kyphosis": 0.783422589302063
+  },
+  "disabledLabels": [
+    "sigmoid_curvature"
+  ],
+  "disabledReason": {
+    "sigmoid_curvature": "Measured ROC AUC 0.61 on the test split, too close to chance."
+  }
+}

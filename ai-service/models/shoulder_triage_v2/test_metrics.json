@@ -1,0 +1,8 @@
+{
+  "shoulder_abnormality": {
+    "threshold": 0.393745,
+    "roc_auc": 0.7923,
+    "average_precision": 0.5164,
+    "test_positive_count": 147
+  }
+}

@@ -1,0 +1,24 @@
+Shoulder Fracture Model
+
+Threshold: 0.145
+ROC-AUC: 0.8070
+Accuracy: 0.6604
+Balanced accuracy: 0.7140
+Sensitivity: 0.8000
+Specificity: 0.6279
+Precision: 0.3333
+F1-score: 0.4706
+
+Confusion matrix:
+[[27 16]
+ [ 2  8]]
+
+Classification report:
+              precision    recall  f1-score   support
+
+ NO_FRACTURE       0.93      0.63      0.75        43
+    FRACTURE       0.33      0.80      0.47        10
+
+    accuracy                           0.66        53
+   macro avg       0.63      0.71      0.61        53
+weighted avg       0.82      0.66      0.70        53

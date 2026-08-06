@@ -1,0 +1,17 @@
+{
+    "labels": [
+        "Cardiomegaly",
+        "Lung Opacity",
+        "Edema",
+        "Consolidation",
+        "Pneumonia",
+        "Atelectasis",
+        "Pneumothorax",
+        "Pleural Effusion"
+    ],
+    "model": "chest_findings_model.keras",
+    "imageSize": [
+        224,
+        224
+    ]
+}

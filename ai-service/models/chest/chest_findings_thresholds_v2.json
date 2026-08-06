@@ -1,0 +1,167 @@
+{
+    "model": "chest_findings_model_v2.keras",
+    "thresholds": {
+        "Cardiomegaly": 0.8199999999999996,
+        "Lung Opacity": 0.8999999999999996,
+        "Edema": 0.8399999999999996,
+        "Consolidation": 0.7199999999999996,
+        "Pneumonia": 0.7699999999999997,
+        "Atelectasis": 0.8999999999999996,
+        "Pneumothorax": 0.5899999999999997,
+        "Pleural Effusion": 0.7799999999999997
+    },
+    "testResults": {
+        "Cardiomegaly": {
+            "threshold": 0.8199999999999996,
+            "sensitivity": 0.7691972076788831,
+            "specificity": 0.7017964071856287,
+            "precision": 0.8762425447316103,
+            "f1_score": 0.8192379182156133,
+            "balanced_accuracy": 0.7354968074322559,
+            "confusion_matrix": [
+                [
+                    586,
+                    249
+                ],
+                [
+                    529,
+                    1763
+                ]
+            ],
+            "auc": 0.8088966608047485
+        },
+        "Lung Opacity": {
+            "threshold": 0.8999999999999996,
+            "sensitivity": 0.9253208868144691,
+            "specificity": 0.39304347826086955,
+            "precision": 0.9615299823633157,
+            "f1_score": 0.9430780042164442,
+            "balanced_accuracy": 0.6591821825376694,
+            "confusion_matrix": [
+                [
+                    226,
+                    349
+                ],
+                [
+                    704,
+                    8723
+                ]
+            ],
+            "auc": 0.7958778738975525
+        },
+        "Edema": {
+            "threshold": 0.8399999999999996,
+            "sensitivity": 0.8058292282430214,
+            "specificity": 0.6915887850467289,
+            "precision": 0.8880343813616829,
+            "f1_score": 0.8449370493920155,
+            "balanced_accuracy": 0.7487090066448752,
+            "confusion_matrix": [
+                [
+                    1110,
+                    495
+                ],
+                [
+                    946,
+                    3926
+                ]
+            ],
+            "auc": 0.8299224376678467
+        },
+        "Consolidation": {
+            "threshold": 0.7199999999999996,
+            "sensitivity": 0.7570664629488159,
+            "specificity": 0.8193018480492813,
+            "precision": 0.7379002233804914,
+            "f1_score": 0.7473604826546003,
+            "balanced_accuracy": 0.7881841554990485,
+            "confusion_matrix": [
+                [
+                    1596,
+                    352
+                ],
+                [
+                    318,
+                    991
+                ]
+            ],
+            "auc": 0.8683229088783264
+        },
+        "Pneumonia": {
+            "threshold": 0.7699999999999997,
+            "sensitivity": 0.7379454926624738,
+            "specificity": 0.5174418604651163,
+            "precision": 0.8091954022988506,
+            "f1_score": 0.7719298245614035,
+            "balanced_accuracy": 0.627693676563795,
+            "confusion_matrix": [
+                [
+                    89,
+                    83
+                ],
+                [
+                    125,
+                    352
+                ]
+            ],
+            "auc": 0.6781604886054993
+        },
+        "Atelectasis": {
+            "threshold": 0.8999999999999996,
+            "sensitivity": 0.9270342972427706,
+            "specificity": 0.3269230769230769,
+            "precision": 0.975238769013088,
+            "f1_score": 0.9505257714187209,
+            "balanced_accuracy": 0.6269786870829238,
+            "confusion_matrix": [
+                [
+                    34,
+                    70
+                ],
+                [
+                    217,
+                    2757
+                ]
+            ],
+            "auc": 0.7066110968589783
+        },
+        "Pneumothorax": {
+            "threshold": 0.5899999999999997,
+            "sensitivity": 0.6103825136612022,
+            "specificity": 0.6900142944659996,
+            "precision": 0.4239089184060721,
+            "f1_score": 0.5003359462486002,
+            "balanced_accuracy": 0.6501984040636009,
+            "confusion_matrix": [
+                [
+                    3379,
+                    1518
+                ],
+                [
+                    713,
+                    1117
+                ]
+            ],
+            "auc": 0.7088265419006348
+        },
+        "Pleural Effusion": {
+            "threshold": 0.7799999999999997,
+            "sensitivity": 0.8644174879959565,
+            "specificity": 0.700990099009901,
+            "precision": 0.9006055818852028,
+            "f1_score": 0.88214055448098,
+            "balanced_accuracy": 0.7827037935029287,
+            "confusion_matrix": [
+                [
+                    1770,
+                    755
+                ],
+                [
+                    1073,
+                    6841
+                ]
+            ],
+            "auc": 0.8681027293205261
+        }
+    }
+}

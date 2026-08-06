@@ -1,0 +1,10 @@
+                  precision    recall  f1-score   support
+
+     bone_lesion       0.82      0.72      0.77       207
+   benign_lesion       0.64      0.79      0.70       170
+malignant_lesion       0.59      0.51      0.55        37
+
+       micro avg       0.71      0.73      0.72       414
+       macro avg       0.68      0.67      0.67       414
+    weighted avg       0.73      0.73      0.72       414
+     samples avg       0.24      0.23      0.23       414

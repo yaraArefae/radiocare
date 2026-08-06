@@ -1,0 +1,7 @@
+{
+  "thresholds": {
+    "fracture": 0.29516297578811646,
+    "hardware": 0.2449800819158554
+  },
+  "model": "shoulder_findings_v1.keras"
+}

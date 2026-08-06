@@ -1,0 +1,26 @@
+{
+  "fracture_visible": {
+    "threshold": 0.315992,
+    "roc_auc": 0.9037445823483059,
+    "average_precision": 0.9538639935968398,
+    "test_positive_count": 2115
+  },
+  "osteopenia": {
+    "threshold": 0.81841,
+    "roc_auc": 0.9644656699622527,
+    "average_precision": 0.8415682272164178,
+    "test_positive_count": 386
+  },
+  "metal": {
+    "threshold": 0.850586,
+    "roc_auc": 0.9931039213892773,
+    "average_precision": 0.9450291350358809,
+    "test_positive_count": 103
+  },
+  "cast": {
+    "threshold": 0.532886,
+    "roc_auc": 0.9985031247498277,
+    "average_precision": 0.9971729504434165,
+    "test_positive_count": 874
+  }
+}

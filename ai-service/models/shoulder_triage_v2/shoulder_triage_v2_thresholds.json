@@ -1,0 +1,8 @@
+{
+  "labels": [
+    "shoulder_abnormality"
+  ],
+  "thresholds": {
+    "shoulder_abnormality": 0.39374473690986633
+  }
+}

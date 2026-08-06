@@ -1,0 +1,15 @@
+{
+  "labels": [
+    "fracture_visible",
+    "osteopenia",
+    "metal",
+    "cast"
+  ],
+  "thresholds": {
+    "fracture_visible": 0.315992,
+    "osteopenia": 0.81841,
+    "metal": 0.850586,
+    "cast": 0.532886
+  },
+  "no_supported_finding_rule": "All supported finding probabilities are below their individual thresholds."
+}

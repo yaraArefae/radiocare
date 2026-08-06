@@ -1,0 +1,20 @@
+{
+  "loss_of_lordosis": {
+    "threshold": 0.360136,
+    "roc_auc": 0.8532,
+    "average_precision": 0.9123,
+    "test_positive_count": 485
+  },
+  "sigmoid_curvature": {
+    "threshold": 0.524052,
+    "roc_auc": 0.6097,
+    "average_precision": 0.2573,
+    "test_positive_count": 150
+  },
+  "cervical_kyphosis": {
+    "threshold": 0.783423,
+    "roc_auc": 0.9265,
+    "average_precision": 0.6406,
+    "test_positive_count": 77
+  }
+}

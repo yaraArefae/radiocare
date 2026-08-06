@@ -1,0 +1,8 @@
+{
+  "labels": [
+    "fracture",
+    "hardware"
+  ],
+  "normal_rule": "NORMAL when neither supported finding exceeds its threshold.",
+  "model": "shoulder_findings_v1.keras"
+}

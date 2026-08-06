@@ -1,0 +1,7 @@
+{
+  "threshold": 0.31,
+  "positive_class": "ABNORMAL",
+  "minimum_validation_sensitivity": 0.8,
+  "selected_model": "shoulder_finetuned_best.keras",
+  "validation_auc": 0.753305
+}

@@ -1,0 +1,8 @@
+                     precision    recall  f1-score   support
+
+no fracture_visible       0.90      0.94      0.92       499
+   fracture_visible       0.67      0.55      0.60       110
+
+           accuracy                           0.87       609
+          macro avg       0.79      0.74      0.76       609
+       weighted avg       0.86      0.87      0.86       609

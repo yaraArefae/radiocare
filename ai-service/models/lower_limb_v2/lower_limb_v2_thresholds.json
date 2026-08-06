@@ -1,0 +1,12 @@
+{
+  "labels": [
+    "bone_lesion",
+    "benign_lesion",
+    "malignant_lesion"
+  ],
+  "thresholds": {
+    "bone_lesion": 0.6945899724960327,
+    "benign_lesion": 0.5189410448074341,
+    "malignant_lesion": 0.95
+  }
+}

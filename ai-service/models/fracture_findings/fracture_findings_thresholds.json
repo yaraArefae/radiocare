@@ -1,0 +1,14 @@
+{
+  "labels": [
+    "fracture_visible"
+  ],
+  "thresholds": {
+    "fracture_visible": 0.3
+  },
+  "thresholdPolicy": {
+    "basis": "clinical cost, measured on the test split",
+    "chosen": "recall 0.73, precision 0.41",
+    "rejected": "best F1 at 0.52 gave recall 0.55, missing 50 of 110",
+    "limitation": "27% of fractures are still missed by this model"
+  }
+}

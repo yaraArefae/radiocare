@@ -1,0 +1,23 @@
+{
+  "threshold": 0.145,
+  "positive_class": "FRACTURE",
+  "minimum_validation_sensitivity": 0.8,
+  "validation_metrics": {
+    "accuracy": 0.6730769230769231,
+    "balanced_accuracy": 0.7583979328165374,
+    "sensitivity": 0.8888888888888888,
+    "specificity": 0.627906976744186,
+    "precision": 0.3333333333333333,
+    "f1": 0.48484848484848486
+  },
+  "test_metrics": {
+    "accuracy": 0.660377358490566,
+    "balanced_accuracy": 0.713953488372093,
+    "sensitivity": 0.8,
+    "specificity": 0.627906976744186,
+    "precision": 0.3333333333333333,
+    "f1": 0.47058823529411764,
+    "roc_auc": 0.8069767441860465
+  },
+  "model": "shoulder_fracture_model.keras"
+}

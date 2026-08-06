@@ -1,0 +1,10 @@
+                   precision    recall  f1-score   support
+
+ loss_of_lordosis       0.80      0.89      0.84       485
+sigmoid_curvature       0.26      0.55      0.35       150
+cervical_kyphosis       0.46      0.74      0.57        77
+
+        micro avg       0.58      0.80      0.67       712
+        macro avg       0.51      0.73      0.59       712
+     weighted avg       0.65      0.80      0.71       712
+      samples avg       0.48      0.54      0.48       712
