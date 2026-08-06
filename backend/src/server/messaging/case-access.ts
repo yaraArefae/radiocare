@@ -1,5 +1,8 @@
-import { clinicKeyFromText } from "@/server/clinics/clinic-key";
+import { doctorClinics, servesClinic } from "@/server/clinics/doctor-clinics";
 import { sql } from "@/server/database/database";
+
+/* The clinic doctor lookup lives with the other clinic helpers now. */
+export { findClinicDoctors } from "@/server/clinics/doctor-clinics";
 
 export type CaseRole = "doctor" | "patient" | "admin";
 
@@ -52,33 +55,6 @@ export const triageResultExpression = `COALESCE(
 
 export function isAbnormalTriage(value: string) {
   return String(value || "").trim().toUpperCase() === "ABNORMAL";
-}
-
-/*
-  Every active doctor whose specialty maps to the given clinic. Used when
-  a case has no assigned doctor yet and the whole clinic has to be told
-  about it.
-*/
-export async function findClinicDoctors(clinicKey: string) {
-  try {
-    const [doctorRows] = await sql.execute(
-      `SELECT dp.user_id AS doctorId, dp.full_name AS doctorName,
-         dp.specialty, dp.subspecialty
-       FROM doctor_profile dp
-       JOIN user u ON u.id = dp.user_id
-       WHERE dp.status = 'Active'`,
-    );
-
-    return (doctorRows as any[]).filter(
-      (doctor) =>
-        clinicKeyFromText(
-          `${doctor.specialty} ${doctor.subspecialty || ""}`,
-        ) === clinicKey,
-    );
-  } catch (error) {
-    console.error("Unable to list the clinic doctors:", error);
-    return [];
-  }
 }
 
 /*
@@ -175,7 +151,8 @@ export async function resolveCaseAccess(
   }
 
   const [profileRows] = await sql.execute(
-    `SELECT full_name AS fullName, specialty, subspecialty
+    `SELECT full_name AS fullName, specialty, subspecialty, clinics,
+       supported_body_regions AS supportedBodyRegions
      FROM doctor_profile
      WHERE user_id = ?
      LIMIT 1`,
@@ -192,11 +169,11 @@ export async function resolveCaseAccess(
     };
   }
 
-  const doctorClinicKey = clinicKeyFromText(
-    `${profile.specialty} ${profile.subspecialty || ""}`,
-  );
-
-  if (study.clinicKey !== doctorClinicKey) {
+  /*
+    A doctor can work in more than one clinic, so the case has to belong
+    to any one of theirs, not to a single one.
+  */
+  if (!servesClinic(profile, study.clinicKey)) {
     return {
       allowed: false,
       status: 403,

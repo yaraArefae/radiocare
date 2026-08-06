@@ -7,10 +7,12 @@ import {
 import path from "node:path";
 
 import { auth } from "@/server/auth/auth";
+import { resolveClinicKey, type ClinicKey } from "@/server/clinics/clinic-key";
 import {
-  clinicKeyFromText,
-  type ClinicKey,
-} from "@/server/clinics/clinic-key";
+  clinicScope,
+  doctorClinics,
+  servesClinic,
+} from "@/server/clinics/doctor-clinics";
 import { databaseReady, sql } from "@/server/database/database";
 import {
   createNotifications,
@@ -220,50 +222,66 @@ async function notifyAboutNewStudy(study: {
   triageResult: string;
   primaryFinding: string | null;
 }) {
-  const isAbnormal =
-    study.triageResult.trim().toUpperCase() === "ABNORMAL";
+  const triage = study.triageResult.trim().toUpperCase();
+  const isAbnormal = triage === "ABNORMAL";
+
+  /*
+    The doctors of the clinic are told about every case that is not
+    clearly normal, which is the same rule their queue uses. Notifying
+    only on ABNORMAL left the uncertain and the unanalysed cases sitting
+    in the queue with nobody told they had arrived.
+  */
+  const needsDoctorReview = triage !== "NORMAL";
+
+  /*
+    A case that could not be analysed is never described as clear. Only
+    a NORMAL result is reported as such, because telling a patient that
+    nothing was found when nothing was examined is a false reassurance.
+  */
+  const patientMessage = isAbnormal
+    ? `The preliminary AI analysis of your ${study.bodyRegion} image found ${
+        study.primaryFinding || "a possible finding"
+      }. A doctor from the matching clinic will review it.`
+    : triage === "NORMAL"
+      ? `The preliminary AI analysis of your ${study.bodyRegion} image did not detect an abnormality.`
+      : `Your ${study.bodyRegion} image could not be judged by the preliminary AI analysis. A doctor from the matching clinic will review it.`;
 
   const notifications: NewNotification[] = [
     {
       userId: study.patientId,
       userRole: "patient",
       type: "new_case",
-      title: isAbnormal
+      title: needsDoctorReview
         ? "Your X-ray needs a doctor review"
         : "Your X-ray analysis is ready",
-      body: isAbnormal
-        ? `The preliminary AI analysis of your ${study.bodyRegion} image found ${
-            study.primaryFinding || "a possible finding"
-          }. A doctor from the matching clinic will review it.`
-        : `The preliminary AI analysis of your ${study.bodyRegion} image did not detect an abnormality.`,
+      body: patientMessage,
       link: `/studies/${study.studyId}`,
       studyId: study.studyId,
     },
   ];
 
-  if (isAbnormal) {
+  if (needsDoctorReview) {
     try {
       const [doctorRows] = await sql.execute(
-        `SELECT dp.user_id AS userId, dp.specialty, dp.subspecialty
+        `SELECT dp.user_id AS userId, dp.specialty, dp.subspecialty, dp.clinics,
+         dp.supported_body_regions AS supportedBodyRegions
          FROM doctor_profile dp
          JOIN user u ON u.id = dp.user_id
          WHERE dp.status = 'Active'`,
       );
 
       for (const doctor of doctorRows as any[]) {
-        const doctorClinicKey = clinicKeyFromText(
-          `${doctor.specialty} ${doctor.subspecialty || ""}`,
-        );
-
-        if (doctorClinicKey !== study.clinicKey) continue;
+        if (!servesClinic(doctor, study.clinicKey)) continue;
 
         notifications.push({
           userId: doctor.userId,
           userRole: "doctor",
           type: "new_case",
-          title: "New abnormal case in your clinic",
+          title: isAbnormal
+            ? "New abnormal case in your clinic"
+            : "New case waiting in your clinic",
           body: `${study.patientName} uploaded a ${study.bodyRegion} image. AI result: ${
-            study.primaryFinding || "abnormal"
+            study.primaryFinding || (isAbnormal ? "abnormal" : "not conclusive")
           }.`,
           link: `/studies/${study.studyId}`,
           studyId: study.studyId,
@@ -706,8 +724,16 @@ export async function POST(request: Request) {
         medicalHistory || null,
       ],
     );
-    const clinicKey = clinicKeyFromText(
-      detectedRegion || detectedClinic || bodyRegion,
+    /*
+      The body region is the most precise description of the anatomy, so
+      it decides the clinic. The clinic reported by the AI service is a
+      fallback only: a value like "orthopedic" cannot tell a wrist from
+      an ankle, and those are two different clinics now.
+    */
+    const clinicKey = resolveClinicKey(
+      bodyRegion,
+      detectedRegion,
+      detectedClinic,
     );
 
     /*
@@ -922,7 +948,8 @@ export async function GET(request: Request) {
     if (!sessionRoles.includes("admin")) {
       if (sessionRoles.includes("doctor")) {
         const [profileRows] = await sql.execute(
-          `SELECT specialty, subspecialty
+          `SELECT specialty, subspecialty, clinics,
+         supported_body_regions AS supportedBodyRegions
            FROM doctor_profile
            WHERE user_id = ?
            LIMIT 1`,
@@ -944,14 +971,10 @@ export async function GET(request: Request) {
           );
         }
 
-        whereConditions.push(
-          "LOWER(TRIM(s.clinic_key)) = ?"
-        );
-        queryValues.push(
-          clinicKeyFromText(
-            `${profile.specialty} ${profile.subspecialty || ""}`
-          )
-        );
+        const scope = clinicScope("s.clinic_key", doctorClinics(profile));
+
+        whereConditions.push(scope.condition);
+        queryValues.push(...scope.values);
       } else if (sessionRoles.includes("patient")) {
         whereConditions.push("s.patient_id = ?");
         queryValues.push(String(session.user?.id ?? ""));

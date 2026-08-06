@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import AdminNav from "@/components/AdminNav";
+import RegisterPatientCard from "@/components/RegisterPatientCard";
 import { authClient } from "@/client/auth/auth-client";
 
 const backendBaseUrl = (
@@ -171,6 +173,10 @@ export default function AdminPatientRequestsPage() {
   return (
     <main className="min-h-screen bg-gradient-to-br from-[#06142f] via-[#0a2450] to-[#071a38] px-6 py-8">
       <div className="mx-auto max-w-6xl">
+        <AdminNav />
+
+        <RegisterPatientCard onRegistered={loadApplications} />
+
         <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
           <Link
             href="/admin/overview"

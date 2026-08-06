@@ -1,4 +1,4 @@
-import { clinicKeyFromText } from "@/server/clinics/clinic-key";
+import { clinicScope, doctorClinics } from "@/server/clinics/doctor-clinics";
 import { auth } from "@/server/auth/auth";
 import { databaseReady, sql } from "@/server/database/database";
 import {
@@ -47,11 +47,12 @@ export async function GET(request: Request) {
     const viewerRole = isDoctor ? "doctor" : "patient";
 
     let scopeCondition = "s.patient_id = ?";
-    let scopeValue = String(session.user?.id ?? "");
+    let scopeValues: string[] = [String(session.user?.id ?? "")];
 
     if (isDoctor) {
       const [profileRows] = await sql.execute(
-        `SELECT specialty, subspecialty
+        `SELECT specialty, subspecialty, clinics,
+         supported_body_regions AS supportedBodyRegions
          FROM doctor_profile
          WHERE user_id = ?
          LIMIT 1`,
@@ -70,10 +71,10 @@ export async function GET(request: Request) {
         );
       }
 
-      scopeCondition = "s.clinic_key = ?";
-      scopeValue = clinicKeyFromText(
-        `${profile.specialty} ${profile.subspecialty || ""}`,
-      );
+      const scope = clinicScope("s.clinic_key", doctorClinics(profile));
+
+      scopeCondition = scope.condition;
+      scopeValues = scope.values;
     }
 
     const [caseRows] = await sql.execute(
@@ -99,7 +100,7 @@ export async function GET(request: Request) {
          OR lastMessageAt IS NOT NULL
        ORDER BY COALESCE(lastMessageAt, s.created_at) DESC
        LIMIT 100`,
-      [viewerRole, scopeValue],
+      [viewerRole, ...scopeValues],
     );
 
     const cases = (caseRows as any[]).map((row) => ({

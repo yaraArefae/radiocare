@@ -48,8 +48,19 @@ const initialFormData: FormDataState = {
   clinicalNotes: "",
 };
 
+/*
+  The body regions a study can be filed under, and the views each one
+  offers.
+
+  This list is exactly the list of clinics: a region that belongs to no
+  clinic would produce a case that no doctor is responsible for, so it
+  would be uploaded and then never seen by anybody.
+*/
 const imagingViews: Record<string, string[]> = {
   Chest: ["PA", "AP", "Lateral"],
+  Shoulder: ["AP", "Axillary", "Scapular Y"],
+  "Hand & Wrist": ["PA", "AP", "Lateral", "Oblique"],
+  "Head & Skull": ["AP", "Lateral", "Towne"],
   Spine: [
     "Cervical AP",
     "Cervical Lateral",
@@ -58,17 +69,8 @@ const imagingViews: Record<string, string[]> = {
     "Lumbar AP",
     "Lumbar Lateral",
   ],
-  Shoulder: ["AP", "Axillary", "Scapular Y"],
-  Elbow: ["AP", "Lateral"],
-  Wrist: ["AP", "Lateral", "Oblique"],
-  Hand: ["PA", "Lateral", "Oblique"],
-  Hip: ["AP", "Lateral"],
-  Knee: ["AP", "Lateral", "Sunrise"],
-  Ankle: ["AP", "Lateral", "Mortise"],
-  Foot: ["AP", "Lateral", "Oblique"],
-  Dental: ["Panoramic", "Periapical", "Bitewing"],
-  Pelvis: ["AP", "Lateral"],
-  Skull: ["AP", "Lateral"],
+  "Pelvis & Hip": ["AP", "Lateral", "Frog leg"],
+  "Leg, Knee & Foot": ["AP", "Lateral", "Oblique", "Mortise", "Sunrise"],
 };
 
 export default function NewStudyPage() {
@@ -191,76 +193,51 @@ export default function NewStudyPage() {
     setSuccess("");
   }
 
+  /*
+    The clinic a body region is sent to. This is the same list the
+    patient chooses from and the same list the doctors work in, so the
+    name shown here is the clinic that will actually receive the case.
+  */
   function clinicNameFromRegion(value: string) {
-    const text = value.toLowerCase();
+    const text = value.toLowerCase().replace(/[_-]+/g, " ");
 
-    if (
-      text.includes("chest") ||
-      text.includes("lung") ||
-      text.includes("thoracic")
-    ) {
-      return "Chest Radiology Clinic";
+    const clinics: Array<[string, string[]]> = [
+      ["Chest Clinic", ["chest", "lung", "thorax", "thoracic", "rib"]],
+      [
+        "Spine Clinic",
+        ["spine", "spinal", "cervical", "lumbar", "vertebra", "scoliosis"],
+      ],
+      ["Head & Skull Clinic", ["head", "skull", "cranial", "brain", "facial"]],
+      ["Pelvis & Hip Clinic", ["pelvis", "pelvic", "hip", "ddh", "sacrum"]],
+      [
+        "Shoulder Clinic",
+        ["shoulder", "clavicle", "scapula", "humerus"],
+      ],
+      [
+        "Hand & Wrist Clinic",
+        ["hand", "wrist", "finger", "thumb", "carpal", "forearm", "elbow"],
+      ],
+      [
+        "Leg, Knee & Foot Clinic",
+        [
+          "lower limb",
+          "leg",
+          "femur",
+          "knee",
+          "tibia",
+          "fibula",
+          "ankle",
+          "foot",
+          "toe",
+        ],
+      ],
+    ];
+
+    for (const [name, keywords] of clinics) {
+      if (keywords.some((keyword) => text.includes(keyword))) return name;
     }
 
-    if (
-      text.includes("cardio") ||
-      text.includes("heart") ||
-      text.includes("cardiac")
-    ) {
-      return "Cardiac Imaging Clinic";
-    }
-
-    if (
-      text.includes("bone") ||
-      text.includes("ortho") ||
-      text.includes("fracture") ||
-      text.includes("spine")
-    ) {
-      return "Bone and Orthopedic Imaging Clinic";
-    }
-
-    if (
-      text.includes("neuro") ||
-      text.includes("brain") ||
-      text.includes("head") ||
-      text.includes("skull")
-    ) {
-      return "Neuro Imaging Clinic";
-    }
-
-    if (
-      text.includes("dental") ||
-      text.includes("teeth") ||
-      text.includes("jaw")
-    ) {
-      return "Dental and Maxillofacial Clinic";
-    }
-
-    if (
-      text.includes("abdomen") ||
-      text.includes("abdominal") ||
-      text.includes("pelvis") ||
-      text.includes("kidney") ||
-      text.includes("liver")
-    ) {
-      return "Abdominal Imaging Clinic";
-    }
-
-    if (
-      text.includes("breast") ||
-      text.includes("mammography")
-    ) {
-      return "Breast Imaging Clinic";
-    }
-
-    if (
-      text.includes("pediatric") ||
-      text.includes("child")
-    ) {
-      return "Pediatric Imaging Clinic";
-    }
-
-    return "General Radiology Clinic";
+    return "General Clinic";
   }
 
   async function classifySelectedImage(

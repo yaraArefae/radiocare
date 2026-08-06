@@ -4,6 +4,7 @@ import Image from "next/image";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import AdminNav from "@/components/AdminNav";
 import { authClient } from "@/client/auth/auth-client";
 
 type UiRole = "admin" | "doctor" | "patient";
@@ -402,6 +403,7 @@ export default function AdminUsersPage() {
 
       <header className="sticky top-0 z-40 border-b border-white/15 bg-blue-950/45 shadow-[0_10px_35px_rgba(0,0,0,0.18)] backdrop-blur-2xl">
         <div className="mx-auto flex max-w-[1700px] items-center justify-between px-5 py-4 sm:px-7">
+        <AdminNav />
           <button
             type="button"
             onClick={() => router.push("/dashboard")}

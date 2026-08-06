@@ -2,7 +2,7 @@
 import CaseChat from "@/components/CaseChat";
 import CaseReport from "@/components/CaseReport";
 import NotificationBell from "@/components/NotificationBell";
-import StudyAppointmentChat from "@/components/StudyAppointmentChat";
+import StudyAppointment from "@/components/StudyAppointment";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -109,6 +109,13 @@ export default function StudyDetailsPage() {
     useState("");
 
   const [imageFailed, setImageFailed] =
+    useState(false);
+
+  /*
+    Turned on by the report when the doctor ticks "a follow-up visit is
+    required", so the booking card beside it stands out.
+  */
+  const [needsFollowUp, setNeedsFollowUp] =
     useState(false);
 
   useEffect(() => {
@@ -565,22 +572,30 @@ export default function StudyDetailsPage() {
             </section>
           </div>
         </div>
-        <div className="mt-7">
+        {/* The three steps of a review: decide and write the report,
+            book the follow-up when it is needed, answer the patient. */}
+        {/* Named so that "Start Review" opens the page on the report. */}
+        <div id="review" className="mt-7 scroll-mt-24">
           <CaseReport
             studyId={study.id}
             mode="doctor"
             aiResult={study.aiResult ?? undefined}
+            onFollowUpChange={setNeedsFollowUp}
           />
         </div>
 
-        <div className="mt-7">
+        <div className="mt-7 grid gap-7 lg:grid-cols-2">
+          <StudyAppointment
+            studyId={study.id}
+            highlight={needsFollowUp}
+          />
+
           <CaseChat
             studyId={study.id}
-            title={`Follow-up with ${study.patientName ?? "the patient"}`}
+            title={`Message ${study.patientName ?? "the patient"}`}
+            compact
           />
         </div>
-
-        <StudyAppointmentChat studyId={study.id} />
       </div>
     </main>
   );

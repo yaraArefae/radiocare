@@ -87,6 +87,26 @@ export default function ChangePasswordPage() {
         return;
       }
 
+      /*
+        The account is no longer on the temporary password an
+        administrator issued, so the flag that forces this screen is
+        cleared.
+      */
+      try {
+        await fetch(
+          `${
+            process.env.NEXT_PUBLIC_BACKEND_URL ??
+            "http://localhost:4000"
+          }/api/account/password-status`,
+          { method: "POST", credentials: "include" },
+        );
+      } catch (statusError) {
+        console.error(
+          "Unable to clear the temporary password flag:",
+          statusError,
+        );
+      }
+
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");

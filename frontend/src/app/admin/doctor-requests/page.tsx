@@ -3,6 +3,8 @@
 import Image from "next/image";
 import Link from "next/link";
 import { createPortal } from "react-dom";
+
+import AdminNav from "@/components/AdminNav";
 import {
   type FormEvent,
   useCallback,
@@ -147,6 +149,7 @@ export default function AdminDoctorRequestsPage() {
 
       <header className="relative z-20 border-b border-white/15 bg-blue-950/45 backdrop-blur-2xl">
         <div className="mx-auto flex max-w-[1700px] items-center justify-between px-5 py-4 sm:px-7">
+        <AdminNav />
           <Link
             href="/dashboard"
             className="flex items-center gap-3"

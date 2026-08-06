@@ -1,10 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { authClient } from "@/client/auth/auth-client";
+
+const backendBaseUrl = (
+  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000"
+).replace(/\/$/, "");
 
 type Statistic = {
   title: string;
@@ -15,11 +19,16 @@ type Statistic = {
 type Study = {
   id: string;
   patient: string;
+  patientId: string;
   bodyRegion: string;
   view: string;
-  result: string;
-  confidence: string;
-  status: "Waiting" | "Reviewed" | "Urgent";
+  clinicKey: string;
+  priority: string;
+  status: string;
+  createdAt: string;
+  aiResult: string | null;
+  primaryFinding: string | null;
+  confidence: number | string | null;
 };
 
 type DashboardUser = {
@@ -28,90 +37,54 @@ type DashboardUser = {
   role?: string | string[] | null;
 };
 
-const statistics: Statistic[] = [
-  {
-    title: "New Studies",
-    value: "18",
-    description: "Uploaded today",
-  },
-  {
-    title: "Waiting for Review",
-    value: "7",
-    description: "Require doctor review",
-  },
-  {
-    title: "Abnormal Cases",
-    value: "11",
-    description: "Flagged by AI models",
-  },
-  {
-    title: "Approved Reports",
-    value: "24",
-    description: "Completed this week",
-  },
-];
 
-const bodyRegions = [
-  {
-    name: "Chest",
-    studies: 42,
-    description: "Chest and lung imaging",
-  },
-  {
-    name: "Upper Limb",
-    studies: 28,
-    description: "Hand, wrist, elbow and shoulder",
-  },
-  {
-    name: "Lower Limb",
-    studies: 19,
-    description: "Hip, knee, ankle and foot",
-  },
-  {
-    name: "Dental",
-    studies: 15,
-    description: "Panoramic dental imaging",
-  },
-];
 
-const studies: Study[] = [
-  {
-    id: "ST-1001",
-    patient: "Patient 001",
-    bodyRegion: "Chest",
-    view: "PA",
-    result: "Possible Cardiomegaly",
-    confidence: "81%",
-    status: "Waiting",
-  },
-  {
-    id: "ST-1002",
-    patient: "Patient 002",
-    bodyRegion: "Wrist",
-    view: "AP",
-    result: "Possible Fracture",
-    confidence: "87%",
-    status: "Urgent",
-  },
-  {
-    id: "ST-1003",
-    patient: "Patient 003",
-    bodyRegion: "Knee",
-    view: "Lateral",
-    result: "No Abnormality Detected",
-    confidence: "92%",
-    status: "Waiting",
-  },
-  {
-    id: "ST-1004",
-    patient: "Patient 004",
-    bodyRegion: "Dental",
-    view: "Panoramic",
-    result: "Possible Deep Caries",
-    confidence: "76%",
-    status: "Waiting",
-  },
-];
+
+/*
+  The clinics of the application, in the order the patient sees them when
+  uploading. Studies are grouped by these, so a category on the dashboard
+  is always a real clinic with its own doctor, never an invented one.
+*/
+const CLINIC_NAMES: Record<string, string> = {
+  chest: "Chest Clinic",
+  shoulder: "Shoulder Clinic",
+  "hand-wrist": "Hand & Wrist Clinic",
+  head: "Head & Skull Clinic",
+  spine: "Spine Clinic",
+  pelvis: "Pelvis & Hip Clinic",
+  "lower-limb": "Leg, Knee & Foot Clinic",
+  general: "Unclassified",
+};
+
+const CLINIC_ORDER = Object.keys(CLINIC_NAMES);
+
+function isFinished(status: string) {
+  return ["completed", "reviewed", "approved"].some((value) =>
+    String(status || "").toLowerCase().includes(value),
+  );
+}
+
+function needsReview(study: Study) {
+  const triage = String(study.aiResult ?? "").trim().toUpperCase();
+
+  return triage !== "NORMAL" && !isFinished(study.status);
+}
+
+function isToday(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return false;
+
+  return date.toDateString() === new Date().toDateString();
+}
+
+function formatConfidence(value: Study["confidence"]) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) return "—";
+
+  return `${Math.round(parsed)}%`;
+}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -120,6 +93,103 @@ export default function DashboardPage() {
     data: session,
     isPending,
   } = authClient.useSession();
+
+  const [studies, setStudies] = useState<Study[]>([]);
+  const [studiesError, setStudiesError] = useState("");
+
+  /*
+    The studies come from the API, which already limits them to what the
+    signed in user may see. An administrator gets every clinic, a doctor
+    only the clinics they work in.
+  */
+  const loadStudies = useCallback(async () => {
+    try {
+      const response = await fetch(`${backendBaseUrl}/api/studies`, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Unable to load the studies.");
+      }
+
+      setStudies(data.studies ?? []);
+      setStudiesError("");
+    } catch (error) {
+      setStudiesError(
+        error instanceof Error ? error.message : "Unable to load the studies.",
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+
+    void loadStudies();
+  }, [loadStudies, session]);
+
+  const waitingStudies = useMemo(
+    () => studies.filter(needsReview),
+    [studies],
+  );
+
+  const statistics: Statistic[] = useMemo(() => {
+    const abnormal = studies.filter(
+      (study) => String(study.aiResult ?? "").toUpperCase() === "ABNORMAL",
+    ).length;
+
+    return [
+      {
+        title: "New Studies",
+        value: String(studies.filter((s) => isToday(s.createdAt)).length),
+        description: "Uploaded today",
+      },
+      {
+        title: "Waiting for Review",
+        value: String(waitingStudies.length),
+        description: "Require doctor review",
+      },
+      {
+        title: "Abnormal Cases",
+        value: String(abnormal),
+        description: "Flagged by AI models",
+      },
+      {
+        title: "Completed",
+        value: String(studies.filter((s) => isFinished(s.status)).length),
+        description: "Reviewed by a doctor",
+      },
+    ];
+  }, [studies, waitingStudies]);
+
+  /*
+    One card per clinic that actually holds a case, so the categories
+    match the clinics a patient can send to.
+  */
+  const clinicGroups = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const study of studies) {
+      const key = study.clinicKey || "general";
+
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+
+    return [...counts.entries()]
+      .sort(
+        (a, b) => CLINIC_ORDER.indexOf(a[0]) - CLINIC_ORDER.indexOf(b[0]),
+      )
+      .map(([key, total]) => ({
+        key,
+        name: CLINIC_NAMES[key] ?? key,
+        studies: total,
+        waiting: waitingStudies.filter((s) => (s.clinicKey || "general") === key)
+          .length,
+      }));
+  }, [studies, waitingStudies]);
 
   useEffect(() => {
     if (!isPending && !session) {
@@ -146,6 +216,72 @@ export default function DashboardPage() {
       }
     }
   }, [isPending, session, router]);
+
+  /*
+    How many registration requests are waiting, so the administration
+    menu can show the work before it is opened.
+
+    This has to sit above the loading and redirect returns below: a hook
+    placed after them runs on some renders and not on others, which is
+    exactly what React refuses.
+  */
+  const [pendingPatientRequests, setPendingPatientRequests] =
+    useState(0);
+
+  useEffect(() => {
+    if (isPending || !session) return;
+
+    const currentUser = session.user as DashboardUser;
+
+    const isAdminUser = (
+      Array.isArray(currentUser.role)
+        ? currentUser.role
+        : (currentUser.role || "").split(",")
+    )
+      .map((role) => role.trim().toLowerCase())
+      .includes("admin");
+
+    if (!isAdminUser) return;
+
+    let isActive = true;
+
+    async function loadPendingRequests() {
+      try {
+        const response = await fetch(
+          `${
+            process.env.NEXT_PUBLIC_BACKEND_URL ??
+            "http://localhost:4000"
+          }/api/patient-requests?status=Pending`,
+          {
+            method: "GET",
+            credentials: "include",
+            cache: "no-store",
+          },
+        );
+
+        if (!response.ok) return;
+
+        const data = await response.json();
+
+        if (isActive && data.success) {
+          setPendingPatientRequests(
+            (data.applications ?? []).length,
+          );
+        }
+      } catch (error) {
+        console.error(
+          "Unable to load the pending patient requests:",
+          error,
+        );
+      }
+    }
+
+    void loadPendingRequests();
+
+    return () => {
+      isActive = false;
+    };
+  }, [isPending, session]);
 
   async function handleLogout() {
     try {
@@ -409,6 +545,32 @@ export default function DashboardPage() {
                 <button
                   type="button"
                   onClick={() =>
+                    router.push("/admin/overview")
+                  }
+                  className="w-full rounded-xl border border-transparent px-4 py-3 text-left font-medium text-slate-200 transition hover:border-white/15 hover:bg-white/10"
+                >
+                  Admin Overview
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push("/admin/patient-requests")
+                  }
+                  className="flex w-full items-center justify-between gap-2 rounded-xl border border-transparent px-4 py-3 text-left font-medium text-slate-200 transition hover:border-white/15 hover:bg-white/10"
+                >
+                  <span>Patient Requests</span>
+
+                  {pendingPatientRequests > 0 && (
+                    <span className="rounded-full bg-rose-500 px-2 py-0.5 text-[11px] font-black text-white">
+                      {pendingPatientRequests}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
                     router.push("/admin/users")
                   }
                   className="w-full rounded-xl border border-transparent px-4 py-3 text-left font-medium text-slate-200 transition hover:border-white/15 hover:bg-white/10"
@@ -489,6 +651,55 @@ export default function DashboardPage() {
             </p>
           </div>
 
+          {/* Patient registration sits next to the doctor one, so an
+              administrator sees both queues on the same screen. */}
+          {isAdmin && (
+            <section className="mt-8 rounded-[28px] border border-cyan-300/20 bg-gradient-to-r from-blue-500/15 to-cyan-400/10 p-6 shadow-[0_24px_70px_rgba(0,0,0,0.22)] backdrop-blur-2xl">
+              <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-center">
+                <div>
+                  <p className="text-sm font-semibold text-cyan-300">
+                    Patient Management
+                  </p>
+
+                  <h3 className="mt-2 text-2xl font-bold text-white">
+                    Registration requests
+                    {pendingPatientRequests > 0 && (
+                      <span className="ml-3 rounded-full bg-rose-500 px-3 py-1 align-middle text-sm font-black text-white">
+                        {pendingPatientRequests} waiting
+                      </span>
+                    )}
+                  </h3>
+
+                  <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+                    Review the people who asked for a patient account,
+                    approve them, and send their sign-in details. You can
+                    also register a walk-in patient directly.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      router.push("/admin/patient-requests")
+                    }
+                    className="rounded-xl bg-gradient-to-r from-blue-600 to-cyan-400 px-5 py-3 font-bold text-white"
+                  >
+                    Open Patient Requests
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => router.push("/admin/overview")}
+                    className="rounded-xl border border-white/20 bg-white/10 px-5 py-3 font-semibold text-white transition hover:bg-white/15"
+                  >
+                    Admin Overview
+                  </button>
+                </div>
+              </div>
+            </section>
+          )}
+
           {isAdmin && <AdminDoctorManagement />}
 
           {/* Statistics */}
@@ -520,34 +731,38 @@ export default function DashboardPage() {
             </h3>
 
             <p className="mt-1 text-sm text-slate-300">
-              Studies grouped by body region and
-              imaging model.
+              Studies grouped by the clinic that received them. A case
+              belongs to one clinic only, the one for its body region.
             </p>
 
-            <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {bodyRegions.map((region) => (
-                <article
-                  key={region.name}
-                  className="rounded-2xl border border-white/15 bg-white/10 p-5 shadow-[0_18px_50px_rgba(0,0,0,0.20)] backdrop-blur-xl transition hover:border-cyan-300/30 hover:bg-white/15"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h4 className="font-bold text-white">
-                        {region.name}
-                      </h4>
+            {clinicGroups.length === 0 ? (
+              <p className="mt-5 text-slate-300">No study has arrived yet.</p>
+            ) : (
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                {clinicGroups.map((group) => (
+                  <button
+                    key={group.key}
+                    type="button"
+                    onClick={() => router.push(`/doctor/clinic/${group.key}`)}
+                    className="rounded-2xl border border-white/15 bg-white/10 p-5 text-left shadow-[0_18px_50px_rgba(0,0,0,0.20)] backdrop-blur-xl transition hover:border-cyan-300/30 hover:bg-white/15"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h4 className="font-bold text-white">{group.name}</h4>
 
-                      <p className="mt-1 text-sm leading-5 text-slate-300">
-                        {region.description}
-                      </p>
+                        <p className="mt-1 text-sm leading-5 text-slate-300">
+                          {group.waiting} waiting for review
+                        </p>
+                      </div>
+
+                      <span className="rounded-full border border-cyan-300/20 bg-cyan-300/15 px-3 py-1 text-sm font-bold text-cyan-100">
+                        {group.studies}
+                      </span>
                     </div>
-
-                    <span className="rounded-full border border-cyan-300/20 bg-cyan-300/15 px-3 py-1 text-sm font-bold text-cyan-100">
-                      {region.studies}
-                    </span>
-                  </div>
-                </article>
-              ))}
-            </div>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Studies table */}
@@ -614,7 +829,19 @@ export default function DashboardPage() {
                 </thead>
 
                 <tbody>
-                  {studies.map((study) => (
+                  {waitingStudies.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={8}
+                        className="px-4 py-8 text-center text-slate-300"
+                      >
+                        {studiesError ||
+                          "No study is waiting for review right now."}
+                      </td>
+                    </tr>
+                  )}
+
+                  {waitingStudies.slice(0, 12).map((study) => (
                     <tr
                       key={study.id}
                       className="border-t border-white/10 text-sm text-slate-200 transition hover:bg-white/10"
@@ -638,11 +865,13 @@ export default function DashboardPage() {
                       </td>
 
                       <td className="px-4 py-5">
-                        {study.result}
+                        {study.primaryFinding ||
+                          study.aiResult ||
+                          "Not analysed yet"}
                       </td>
 
                       <td className="px-4 py-5 font-semibold text-cyan-300">
-                        {study.confidence}
+                        {formatConfidence(study.confidence)}
                       </td>
 
                       <td className="px-4 py-5">
@@ -658,6 +887,9 @@ export default function DashboardPage() {
                       <td className="px-4 py-5">
                         <button
                           type="button"
+                          onClick={() =>
+                            router.push(`/studies/${study.id}#review`)
+                          }
                           className="font-semibold text-cyan-300 transition hover:text-cyan-100"
                         >
                           Review

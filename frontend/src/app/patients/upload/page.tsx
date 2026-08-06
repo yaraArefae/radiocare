@@ -97,8 +97,8 @@ const REGION_CONFIG: Record<BodyRegion, RegionConfig> = {
     label: "Shoulder",
     endpoint: "/predict/shoulder",
     imagingView: "Shoulder X-ray",
-    clinicSlug: "upper-limb",
-    clinicName: "Upper Limb Clinic",
+    clinicSlug: "shoulder",
+    clinicName: "Shoulder Clinic",
     clinicalNotes:
       "Shoulder X-ray uploaded by the patient for preliminary AI analysis.",
   },
@@ -110,8 +110,8 @@ const REGION_CONFIG: Record<BodyRegion, RegionConfig> = {
     label: "Hand & Wrist",
     endpoint: "/predict/hand-wrist",
     imagingView: "Hand & Wrist X-ray",
-    clinicSlug: "upper-limb",
-    clinicName: "Upper Limb Clinic",
+    clinicSlug: "hand-wrist",
+    clinicName: "Hand & Wrist Clinic",
     clinicalNotes:
       "Hand or wrist X-ray uploaded by the patient for preliminary AI analysis.",
   },
@@ -152,7 +152,7 @@ const REGION_CONFIG: Record<BodyRegion, RegionConfig> = {
     endpoint: "/predict/region/lower-limb",
     imagingView: "Lower Limb X-ray",
     clinicSlug: "lower-limb",
-    clinicName: "Lower Limb Clinic",
+    clinicName: "Leg, Knee & Foot Clinic",
     clinicalNotes:
       "Leg, knee, ankle, or foot X-ray uploaded by the patient for doctor review.",
   },
@@ -276,23 +276,51 @@ export default function PatientUploadPage() {
       const aiFormData = new FormData();
       aiFormData.append("image", selectedFile);
 
-      const aiResponse = await fetch(
-        `${AI_SERVICE_URL}${regionConfig.endpoint}`,
-        {
-          method: "POST",
-          body: aiFormData,
-        },
-      );
+      /*
+        A failed analysis must never lose the image. The preliminary AI
+        result is an aid, not the purpose: if the service is unreachable
+        or has no model for this region, the study is still saved as
+        NOT_ANALYZED and goes to the doctor of the clinic, who reads it
+        without an AI suggestion.
+      */
+      let result: AnalysisResult;
+      let analysisFailed = false;
 
-      const aiData = await aiResponse.json();
-
-      if (!aiResponse.ok) {
-        throw new Error(
-          aiData.detail ?? "The image analysis failed.",
+      try {
+        const aiResponse = await fetch(
+          `${AI_SERVICE_URL}${regionConfig.endpoint}`,
+          {
+            method: "POST",
+            body: aiFormData,
+          },
         );
+
+        const aiData = await aiResponse.json();
+
+        if (!aiResponse.ok) {
+          throw new Error(aiData.detail ?? "The image analysis failed.");
+        }
+
+        result = aiData as AnalysisResult;
+      } catch (analysisError) {
+        console.error("The preliminary analysis failed:", analysisError);
+
+        result = {
+          success: false,
+          bodyRegion,
+          detectedClinic: regionConfig.clinicSlug,
+          triageResult: "NOT_ANALYZED",
+          result: "NOT_ANALYZED",
+          confidence: 0,
+          needsDoctorReview: true,
+          priority: "Needs Review",
+          message:
+            "No preliminary analysis was produced for this image. A doctor of the clinic reviews it directly.",
+        } as AnalysisResult;
+
+        analysisFailed = true;
       }
 
-      const result = aiData as AnalysisResult;
       const triageResult =
         result.triageResult ?? result.result;
       const possibleFindings =
@@ -409,7 +437,9 @@ export default function PatientUploadPage() {
       }
 
       setSaveMessage(
-        `The study was saved successfully and sent to the ${regionConfig.clinicName}.`,
+        analysisFailed
+          ? `No preliminary AI result was produced for this image, so it was sent to the ${regionConfig.clinicName} for a doctor to read directly.`
+          : `The study was saved successfully and sent to the ${regionConfig.clinicName}.`,
       );
     } catch (error) {
       setErrorMessage(

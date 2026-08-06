@@ -10,14 +10,26 @@ import ClinicAiStatus, {
 import NotificationBell from "@/components/NotificationBell";
 import { authClient } from "@/client/auth/auth-client";
 
+/*
+  The clinics of the doctor are the same list the patient chooses from
+  when uploading, so every one of them has its own key on the server.
+*/
+type ClinicKey =
+  | "chest"
+  | "shoulder"
+  | "hand-wrist"
+  | "head"
+  | "spine"
+  | "pelvis"
+  | "lower-limb";
+
 type ClinicInformation = {
   name: string;
   specialty: string;
   description: string;
   icon: string;
   imageTypes: string[];
-  apiClinicKey: "chest" | "bone" | "neuro";
-  bodyRegionKeywords: string[];
+  apiClinicKey: ClinicKey;
 };
 
 type ClinicStudy = {
@@ -54,7 +66,6 @@ const clinicData: Record<string, ClinicInformation> = {
     icon: "🫁",
     imageTypes: ["Chest X-ray", "Pneumonia", "Thoracic Imaging"],
     apiClinicKey: "chest",
-    bodyRegionKeywords: ["chest", "thorax", "thoracic", "lung"],
   },
 
   head: {
@@ -64,8 +75,7 @@ const clinicData: Record<string, ClinicInformation> = {
       "Manage head and skull radiology studies and review cranial imaging results.",
     icon: "🧠",
     imageTypes: ["Skull X-ray", "Head Imaging", "Cranial Studies"],
-    apiClinicKey: "neuro",
-    bodyRegionKeywords: ["head", "skull", "brain", "cranial"],
+    apiClinicKey: "head",
   },
 
   spine: {
@@ -75,15 +85,7 @@ const clinicData: Record<string, ClinicInformation> = {
       "Manage cervical, thoracic, lumbar spine, and scoliosis imaging studies.",
     icon: "🦴",
     imageTypes: ["Cervical Spine", "Lumbar Spine", "Scoliosis"],
-    apiClinicKey: "bone",
-    bodyRegionKeywords: [
-      "spine",
-      "cervical",
-      "thoracic spine",
-      "lumbar",
-      "scoliosis",
-      "vertebra",
-    ],
+    apiClinicKey: "spine",
   },
 
   pelvis: {
@@ -93,51 +95,37 @@ const clinicData: Record<string, ClinicInformation> = {
       "Manage pelvic, hip, and developmental dysplasia imaging cases.",
     icon: "🩻",
     imageTypes: ["Pelvis X-ray", "Hip X-ray", "DDH"],
-    apiClinicKey: "bone",
-    bodyRegionKeywords: ["pelvis", "pelvic", "hip", "ddh"],
+    apiClinicKey: "pelvis",
   },
 
-  "upper-limb": {
-    name: "Upper Limb Clinic",
-    specialty: "Shoulder, Arm & Hand Imaging",
+  shoulder: {
+    name: "Shoulder Clinic",
+    specialty: "Shoulder Imaging",
     description:
-      "Manage shoulder, elbow, wrist, hand, and upper-limb X-ray studies.",
+      "Manage shoulder joint, clavicle, and upper arm X-ray studies.",
     icon: "💪",
-    imageTypes: ["Shoulder", "Arm", "Hand"],
-    apiClinicKey: "bone",
-    bodyRegionKeywords: [
-      "upper limb",
-      "shoulder",
-      "clavicle",
-      "humerus",
-      "arm",
-      "elbow",
-      "forearm",
-      "wrist",
-      "hand",
-      "finger",
-    ],
+    imageTypes: ["Shoulder X-ray", "Clavicle"],
+    apiClinicKey: "shoulder",
+  },
+
+  "hand-wrist": {
+    name: "Hand & Wrist Clinic",
+    specialty: "Hand & Wrist Imaging",
+    description:
+      "Manage wrist, hand, finger, and forearm X-ray studies.",
+    icon: "🤚",
+    imageTypes: ["Wrist X-ray", "Hand X-ray"],
+    apiClinicKey: "hand-wrist",
   },
 
   "lower-limb": {
-    name: "Lower Limb Clinic",
+    name: "Leg, Knee & Foot Clinic",
     specialty: "Leg, Knee & Foot Imaging",
     description:
       "Manage leg, knee, ankle, foot, and lower-limb radiology studies.",
     icon: "🦵",
     imageTypes: ["Leg", "Knee", "Foot"],
-    apiClinicKey: "bone",
-    bodyRegionKeywords: [
-      "lower limb",
-      "leg",
-      "femur",
-      "knee",
-      "tibia",
-      "fibula",
-      "ankle",
-      "foot",
-      "toe",
-    ],
+    apiClinicKey: "lower-limb",
   },
 };
 
@@ -184,25 +172,15 @@ function normalizeText(value: unknown) {
   the doctor, so they stay in the queue too.
 */
 function needsDoctorReview(study: ClinicStudy) {
-  const result = normalizeText(study.aiResult);
-
-  return result !== "normal";
-}
-
-function belongsToClinic(study: ClinicStudy, clinic: ClinicInformation) {
   /*
-    Body regions arrive as HAND_WRIST or LOWER_LIMB, while the keywords
-    are written with spaces, so both sides are compared with spaces.
+    A case leaves the queue once its report is approved, otherwise a
+    finished case would sit in the list for ever and hide the new ones.
   */
-  const region = normalizeText(study.bodyRegion).replace(/[_-]+/g, " ");
-
-  if (!region) {
-    return true;
+  if (isCompletedStatus(study.status)) {
+    return false;
   }
 
-  return clinic.bodyRegionKeywords.some((keyword) =>
-    region.includes(keyword.toLowerCase().replace(/[_-]+/g, " ")),
-  );
+  return normalizeText(study.aiResult) !== "normal";
 }
 
 function isCompletedStatus(status: string) {
@@ -288,7 +266,7 @@ export default function ClinicDetailsPage() {
       }
 
       const clinicStudies = (result.studies ?? []).filter(
-        (study) => needsDoctorReview(study) && belongsToClinic(study, clinic),
+        needsDoctorReview,
       );
 
       setStudies(clinicStudies);
@@ -667,10 +645,11 @@ export default function ClinicDetailsPage() {
                     <span className="text-sm font-semibold text-slate-300">
                       Status: {study.status || "Waiting"}
                     </span>
+                    {/* Straight into the case, where the doctor reads the
+                        image, writes the report, answers the patient, and
+                        books the follow-up. */}
                     <Link
-                      href={`/studies?clinic=${encodeURIComponent(
-                        slug,
-                      )}&study=${encodeURIComponent(study.id)}`}
+                      href={`/studies/${encodeURIComponent(study.id)}`}
                       className="rounded-xl border border-cyan-300/30 bg-cyan-400/15 px-4 py-2 text-sm font-bold text-cyan-100 transition hover:bg-cyan-400/25"
                     >
                       Review Case

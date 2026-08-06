@@ -41,6 +41,14 @@ function formatMessageTime(value: string) {
   }).format(date);
 }
 
+/*
+  The private conversation about one case.
+
+  Only the patient the case belongs to, and a doctor of the clinic that
+  received it, can open this thread. That rule is enforced in the API,
+  so another patient cannot reach the messages even by calling the
+  endpoint directly.
+*/
 export default function CaseChat({
   studyId,
   title,

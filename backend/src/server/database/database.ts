@@ -3,6 +3,12 @@ import mysqlCallback from "mysql2";
 import mysql from "mysql2/promise";
 import { hashPassword } from "better-auth/crypto";
 import * as crypto from "node:crypto";
+import {
+  CLINIC_KEYS,
+  clinicKeysFromProfile,
+  replacementClinics,
+  resolveClinicKey,
+} from "@/server/clinics/clinic-key";
 
 const databaseUrl = new URL(
   process.env.DATABASE_URL ?? "mysql://root@127.0.0.1:3307/radiocare",
@@ -63,6 +69,91 @@ async function addColumnWhenMissing(
   await sql.query(
     `ALTER TABLE \`${tableName}\` ADD COLUMN \`${columnName}\` ${columnDefinition}`,
   );
+}
+
+/*
+  Moves the records that were written while every bone case shared one
+  "bone" clinic over to the clinic of their own body region, and gives
+  the doctors approved back then the clinics of their specialty.
+
+  Without this, cases uploaded before the split would stay in a clinic
+  that no doctor is a member of any more, so nobody would ever see them.
+*/
+async function migrateClinicKeys() {
+  const [studyRows] = await sql.execute(
+    `SELECT id, body_region AS bodyRegion, clinic_key AS clinicKey
+     FROM study
+     WHERE clinic_key IS NULL OR clinic_key NOT IN (${CLINIC_KEYS.map(
+       () => "?",
+     ).join(", ")})`,
+    CLINIC_KEYS,
+  );
+
+  for (const study of studyRows as any[]) {
+    const clinicKey = resolveClinicKey(
+      study.bodyRegion,
+      undefined,
+      study.clinicKey,
+    );
+
+    await sql.execute("UPDATE study SET clinic_key = ? WHERE id = ?", [
+      clinicKey,
+      study.id,
+    ]);
+  }
+
+  if ((studyRows as unknown[]).length > 0) {
+    console.log(
+      `Moved ${(studyRows as unknown[]).length} case(s) to the clinic of their body region.`,
+    );
+  }
+
+  const [doctorRows] = await sql.execute(
+    `SELECT user_id AS userId, specialty, subspecialty, clinics,
+       supported_body_regions AS supportedBodyRegions
+     FROM doctor_profile`,
+  );
+
+  for (const doctor of doctorRows as any[]) {
+    const stored = String(doctor.clinics ?? "")
+      .split(",")
+      .map((value: string) => value.trim())
+      .filter(Boolean);
+
+    const valid = stored.filter((key: string) =>
+      (CLINIC_KEYS as string[]).includes(key),
+    );
+
+    /* Nothing to do for a doctor whose clinics all still exist. */
+    if (stored.length > 0 && valid.length === stored.length) continue;
+
+    /*
+      A retired key such as the old "upper-limb" is replaced by the
+      clinics that took its place, so a doctor is never left with fewer
+      clinics than they had.
+    */
+    const replaced = new Set<string>(valid);
+
+    for (const key of stored) {
+      if ((CLINIC_KEYS as string[]).includes(key)) continue;
+
+      replacementClinics(key).forEach((clinic) => replaced.add(clinic));
+    }
+
+    const clinics =
+      replaced.size > 0
+        ? [...replaced]
+        : clinicKeysFromProfile(
+            doctor.specialty,
+            doctor.subspecialty,
+            doctor.supportedBodyRegions,
+          );
+
+    await sql.execute(
+      "UPDATE doctor_profile SET clinics = ? WHERE user_id = ?",
+      [clinics.join(","), doctor.userId],
+    );
+  }
 }
 
 async function initializeDatabase() {
@@ -190,6 +281,19 @@ async function initializeDatabase() {
       CONSTRAINT fk_appointment_patient FOREIGN KEY (patient_id) REFERENCES patient(id),
       CONSTRAINT fk_appointment_doctor FOREIGN KEY (doctor_id) REFERENCES user(id)
     ) ENGINE=InnoDB`,
+    `CREATE TABLE IF NOT EXISTS admin_audit (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      admin_id VARCHAR(64) NULL,
+      admin_email VARCHAR(255) NULL,
+      action VARCHAR(80) NOT NULL,
+      target_type VARCHAR(40) NULL,
+      target_id VARCHAR(64) NULL,
+      target_label VARCHAR(255) NULL,
+      details TEXT NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      INDEX idx_admin_audit_created (created_at),
+      INDEX idx_admin_audit_admin (admin_id, created_at)
+    ) ENGINE=InnoDB`,
     `CREATE TABLE IF NOT EXISTS case_message (
       id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
       study_id VARCHAR(64) NOT NULL,
@@ -268,11 +372,41 @@ async function initializeDatabase() {
   );
   await addColumnWhenMissing("report", "additional_tests", "TEXT NULL");
   await addColumnWhenMissing("report", "doctor_notes", "TEXT NULL");
+  /*
+    A temporary password handed out by an administrator has to be
+    replaced on the first sign in, so the flag lives on the account
+    itself and not only on the application record.
+  */
+  await addColumnWhenMissing(
+    "user",
+    "mustChangePassword",
+    "BOOLEAN NOT NULL DEFAULT FALSE",
+  );
+  await addColumnWhenMissing(
+    "user",
+    "passwordExpiresAt",
+    "DATETIME(3) NULL",
+  );
+
   await addColumnWhenMissing(
     "doctor_profile",
     "availability",
     "JSON NULL",
   );
+
+  /*
+    The clinics a doctor works in, as a comma separated list of clinic
+    keys. One doctor can cover several: an orthopedic doctor reads the
+    spine, pelvis, upper limb and lower limb clinics. It stays empty
+    until an admin assigns it, and the clinics are then read from the
+    specialty the doctor registered with.
+  */
+  await addColumnWhenMissing(
+    "doctor_profile",
+    "clinics",
+    "VARCHAR(255) NULL",
+  );
+
   await addColumnWhenMissing(
     "appointment",
     "patient_response_note",
@@ -296,16 +430,44 @@ async function initializeDatabase() {
     "UPDATE appointment SET status = 'Pending' WHERE status = 'Scheduled'",
   );
 
+  await migrateClinicKeys();
+
   const seedUsers = [
     { name: "RadioCare Admin", email: "admin@radiocare.com", role: "admin" },
     { name: "RadioCare Doctor", email: "doctor@radiocare.com", role: "doctor" },
     /*
-      A second demo doctor covers the orthopedic clinic. Without one, any
-      bone, hand, wrist, or limb case has no doctor to reach.
+      One doctor for every clinic. A clinic without a doctor is a dead
+      end: the patient can upload to it, but nobody is ever told about
+      the case.
     */
     {
-      name: "RadioCare Orthopedic Doctor",
+      name: "RadioCare Shoulder Doctor",
       email: "doctor.ortho@radiocare.com",
+      role: "doctor",
+    },
+    {
+      name: "RadioCare Hand & Wrist Doctor",
+      email: "doctor.hand@radiocare.com",
+      role: "doctor",
+    },
+    {
+      name: "RadioCare Head & Skull Doctor",
+      email: "doctor.head@radiocare.com",
+      role: "doctor",
+    },
+    {
+      name: "RadioCare Spine Doctor",
+      email: "doctor.spine@radiocare.com",
+      role: "doctor",
+    },
+    {
+      name: "RadioCare Pelvis & Hip Doctor",
+      email: "doctor.pelvis@radiocare.com",
+      role: "doctor",
+    },
+    {
+      name: "RadioCare Leg, Knee & Foot Doctor",
+      email: "doctor.leg@radiocare.com",
       role: "doctor",
     },
     { name: "RadioCare Patient", email: "patient@radiocare.com", role: "patient" },
@@ -340,11 +502,48 @@ const userId = crypto.randomUUID();    const now = new Date();
       email: "doctor@radiocare.com",
       fullName: "RadioCare Chest Doctor",
       specialty: "Chest Radiology",
+      clinics: "chest",
     },
+    /*
+      This account already answered shoulder cases before the arm was
+      split into two clinics, so it keeps the shoulder clinic and its
+      conversations stay reachable.
+    */
     {
       email: "doctor.ortho@radiocare.com",
-      fullName: "RadioCare Orthopedic Doctor",
-      specialty: "Orthopedics / Bone Imaging",
+      fullName: "RadioCare Shoulder Doctor",
+      specialty: "Shoulder Imaging",
+      clinics: "shoulder",
+    },
+    {
+      email: "doctor.hand@radiocare.com",
+      fullName: "RadioCare Hand & Wrist Doctor",
+      specialty: "Hand & Wrist Imaging",
+      clinics: "hand-wrist",
+    },
+    {
+      email: "doctor.head@radiocare.com",
+      fullName: "RadioCare Head & Skull Doctor",
+      specialty: "Head & Skull Imaging",
+      clinics: "head",
+    },
+    {
+      email: "doctor.spine@radiocare.com",
+      fullName: "RadioCare Spine Doctor",
+      specialty: "Spine Imaging",
+      clinics: "spine",
+    },
+    {
+      email: "doctor.pelvis@radiocare.com",
+      fullName: "RadioCare Pelvis & Hip Doctor",
+      specialty: "Pelvis & Hip Imaging",
+      clinics: "pelvis",
+    },
+    {
+      email: "doctor.leg@radiocare.com",
+      fullName: "RadioCare Leg, Knee & Foot Doctor",
+      specialty: "Lower Limb Imaging",
+      clinics: "lower-limb",
     },
   ];
 
@@ -359,19 +558,55 @@ const userId = crypto.randomUUID();    const now = new Date();
     if (!doctorUserId) continue;
 
     const [profileRows] = await sql.execute(
-      "SELECT id FROM doctor_profile WHERE user_id = ? LIMIT 1",
+      "SELECT id, clinics FROM doctor_profile WHERE user_id = ? LIMIT 1",
       [doctorUserId],
     );
 
-    if ((profileRows as unknown[]).length > 0) continue;
+    /*
+      A demo profile that exists already is only corrected when it still
+      holds the clinics it was seeded with before the split. Clinics an
+      administrator chose by hand are never overwritten.
+    */
+    const existingProfile = (profileRows as any[])[0];
+
+    if (existingProfile) {
+      /*
+        The values this account was seeded with before every body region
+        became its own clinic, including the one the migration above
+        rewrites them to. Clinics an administrator chose are not in this
+        list and are therefore never overwritten.
+      */
+      const legacyClinics = [
+        "spine,pelvis,upper-limb,lower-limb",
+        "spine,pelvis,lower-limb,shoulder,hand-wrist",
+        "",
+        null,
+      ];
+
+      if (legacyClinics.includes(existingProfile.clinics)) {
+        await sql.execute(
+          `UPDATE doctor_profile
+           SET clinics = ?, full_name = ?, specialty = ?
+           WHERE user_id = ?`,
+          [
+            demoDoctor.clinics,
+            demoDoctor.fullName,
+            demoDoctor.specialty,
+            doctorUserId,
+          ],
+        );
+      }
+
+      continue;
+    }
 
     await sql.execute(
       `INSERT INTO doctor_profile
        (id, user_id, full_name, phone, specialty, subspecialty,
         license_number, licensing_authority, license_expiry_date,
         years_of_experience, current_workplace,
-        supported_imaging_types, supported_body_regions, status)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, 'Active')`,
+        supported_imaging_types, supported_body_regions, clinics, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'Active')`,
       [
         `DOC-${crypto.randomUUID()}`,
         doctorUserId,
@@ -386,7 +621,54 @@ const userId = crypto.randomUUID();    const now = new Date();
         "RadioCare Clinic",
         JSON.stringify([]),
         JSON.stringify([]),
+        demoDoctor.clinics,
       ],
+    );
+  }
+
+  await warnAboutEmptyClinics();
+}
+
+/*
+  Points out any clinic that has no active doctor. A patient can upload
+  to every clinic, so one without a doctor accepts cases that nobody is
+  ever notified about.
+*/
+async function warnAboutEmptyClinics() {
+  const [doctorRows] = await sql.execute(
+    `SELECT specialty, subspecialty, clinics,
+       supported_body_regions AS supportedBodyRegions
+     FROM doctor_profile
+     WHERE status = 'Active'`,
+  );
+
+  const covered = new Set<string>();
+
+  for (const doctor of doctorRows as any[]) {
+    const assigned = String(doctor.clinics ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+
+    const clinics =
+      assigned.length > 0
+        ? assigned
+        : clinicKeysFromProfile(
+            doctor.specialty,
+            doctor.subspecialty,
+            doctor.supportedBodyRegions,
+          );
+
+    clinics.forEach((clinic) => covered.add(clinic));
+  }
+
+  const empty = CLINIC_KEYS.filter(
+    (key) => key !== "general" && !covered.has(key),
+  );
+
+  if (empty.length > 0) {
+    console.warn(
+      `Clinics with no active doctor: ${empty.join(", ")}. Cases sent there will wait until a doctor is assigned to them.`,
     );
   }
 }

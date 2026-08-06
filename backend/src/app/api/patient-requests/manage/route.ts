@@ -1,5 +1,10 @@
-import { randomBytes } from "node:crypto";
-
+import {
+  deliverCredentials,
+  generateTemporaryPassword,
+  markTemporaryPassword,
+  recordAdminAction,
+  TEMPORARY_PASSWORD_VALIDITY_MS,
+} from "@/server/admin/admin-actions";
 import { auth } from "@/server/auth/auth";
 import { databaseReady, sql } from "@/server/database/database";
 
@@ -7,7 +12,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const PATIENT_AUTH_ROLE = "patient";
-const TEMPORARY_PASSWORD_VALIDITY_MS = 24 * 60 * 60 * 1000;
 
 type CreatedUserResult = {
   id?: string;
@@ -22,10 +26,6 @@ function normalizeRoles(role: string | string[] | null | undefined) {
   return values
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
-}
-
-function generateTemporaryPassword() {
-  return `Rc!${randomBytes(10).toString("base64url")}7A`;
 }
 
 /*
@@ -106,6 +106,16 @@ export async function POST(request: Request) {
          WHERE id = ?`,
         [reason || null, session.user?.id ?? null, requestId],
       );
+
+      await recordAdminAction({
+        adminId: session.user?.id,
+        adminEmail: session.user?.email,
+        action: "patient_request_rejected",
+        targetType: "patient_application",
+        targetId: requestId,
+        targetLabel: application.fullName,
+        details: reason || null,
+      });
 
       return Response.json({
         success: true,
@@ -197,10 +207,41 @@ export async function POST(request: Request) {
       throw databaseError;
     }
 
+    /*
+      The temporary password only works until it expires, and the first
+      sign in has to replace it.
+    */
+    await markTemporaryPassword(createdUserId, expiresAt);
+
+    const delivery = await deliverCredentials({
+      to: application.email,
+      name: application.fullName,
+      loginEmail: application.email,
+      temporaryPassword,
+      expiresAt,
+      role: "patient",
+    });
+
+    await recordAdminAction({
+      adminId: session.user?.id,
+      adminEmail: session.user?.email,
+      action: "patient_request_approved",
+      targetType: "user",
+      targetId: createdUserId,
+      targetLabel: application.fullName,
+      details: delivery.delivered
+        ? `Credentials emailed to ${application.email}`
+        : `Email not sent: ${delivery.reason}`,
+    });
+
     return Response.json({
       success: true,
-      message: "The patient account was created.",
+      message: delivery.delivered
+        ? `The patient account was created and the details were emailed to ${application.email}.`
+        : "The patient account was created. The email could not be sent, so hand the details over directly.",
       status: "Approved",
+      emailDelivered: delivery.delivered,
+      emailError: delivery.delivered ? null : delivery.reason,
       credentials: {
         loginEmail: application.email,
         temporaryPassword,

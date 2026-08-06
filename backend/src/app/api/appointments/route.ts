@@ -6,7 +6,7 @@ import {
   normalizeDurationMinutes,
 } from "@/server/appointments/scheduling";
 import { auth } from "@/server/auth/auth";
-import { clinicKeyFromText } from "@/server/clinics/clinic-key";
+import { servesClinic } from "@/server/clinics/doctor-clinics";
 import { databaseReady, sql } from "@/server/database/database";
 import {
   createNotification,
@@ -232,7 +232,8 @@ export async function POST(request: Request) {
     await databaseReady;
 
     const [doctorRows] = await sql.execute(
-      `SELECT specialty, subspecialty
+      `SELECT specialty, subspecialty, clinics,
+         supported_body_regions AS supportedBodyRegions
        FROM doctor_profile
        WHERE user_id = ?
        LIMIT 1`,
@@ -252,9 +253,6 @@ export async function POST(request: Request) {
       );
     }
 
-    const assignedClinicKey = clinicKeyFromText(
-      `${doctorProfile.specialty} ${doctorProfile.subspecialty || ""}`,
-    );
 
     const [studyRows] = await sql.execute(
       `SELECT id, patient_id AS patientId, clinic_key AS clinicKey
@@ -276,7 +274,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (study.clinicKey !== assignedClinicKey) {
+    if (!servesClinic(doctorProfile, study.clinicKey)) {
       return Response.json(
         {
           success: false,

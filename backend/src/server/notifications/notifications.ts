@@ -1,5 +1,37 @@
 import { sql } from "@/server/database/database";
 
+/*
+  Tells every administrator that something is waiting for their review.
+  Registration requests sit in the queue until an admin acts on them, so
+  they have to be pushed rather than discovered by chance.
+*/
+export async function notifyAdmins(notification: {
+  type: NotificationType;
+  title: string;
+  body?: string;
+  link?: string;
+}) {
+  try {
+    const [adminRows] = await sql.execute(
+      "SELECT id FROM `user` WHERE role LIKE '%admin%' AND banned = FALSE",
+    );
+
+    const admins = adminRows as { id: string }[];
+
+    if (admins.length === 0) return;
+
+    await createNotifications(
+      admins.map((admin) => ({
+        userId: admin.id,
+        userRole: "admin" as const,
+        ...notification,
+      })),
+    );
+  } catch (error) {
+    console.error("Unable to notify the administrators:", error);
+  }
+}
+
 export type NotificationType =
   | "appointment_invitation"
   | "appointment_confirmed"
@@ -9,7 +41,10 @@ export type NotificationType =
   | "appointment_completed"
   | "appointment_reminder"
   | "chat_message"
-  | "new_case";
+  | "new_case"
+  | "registration_request"
+  /* An account change made by an admin, such as new clinics. */
+  | "account_updated";
 
 export type NewNotification = {
   userId: string;

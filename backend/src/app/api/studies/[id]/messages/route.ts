@@ -15,6 +15,8 @@ export const dynamic = "force-dynamic";
 
 const MAXIMUM_MESSAGE_LENGTH = 2000;
 
+
+
 type RouteContext = {
   params: Promise<{
     id: string;

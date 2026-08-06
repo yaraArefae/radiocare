@@ -97,6 +97,16 @@ export async function GET(request: Request) {
        WHERE success = FALSE AND created_at >= DATE_SUB(CURRENT_TIMESTAMP(3), INTERVAL 1 DAY)`,
     );
 
+    const [auditRows] = await sql.execute(
+      `SELECT id, COALESCE(admin_email, '') AS adminEmail, action,
+         COALESCE(target_type, '') AS targetType,
+         COALESCE(target_label, '') AS targetLabel,
+         COALESCE(details, '') AS details, created_at AS createdAt
+       FROM admin_audit
+       ORDER BY created_at DESC
+       LIMIT 50`,
+    );
+
     const toNumber = (value: unknown) => Number(value ?? 0);
 
     return Response.json({
@@ -135,6 +145,7 @@ export async function GET(request: Request) {
           (requestRows as any[])[0]?.pendingAppointments,
         ),
       },
+      audit: auditRows as any[],
       security: {
         failedLastDay: toNumber((failedRows as any[])[0]?.failedLastDay),
         attempts: (loginRows as any[]).map((row) => ({

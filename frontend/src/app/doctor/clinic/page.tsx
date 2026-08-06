@@ -2,12 +2,18 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
 
 import ClinicAiStatus, {
   useClinicCapabilities,
 } from "@/components/ClinicAiStatus";
 import NotificationBell from "@/components/NotificationBell";
+import PasswordChangeGate from "@/components/PasswordChangeGate";
 import { authClient } from "@/client/auth/auth-client";
+
+const backendBaseUrl = (
+  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000"
+).replace(/\/$/, "");
 
 const clinics = [
   {
@@ -47,17 +53,26 @@ const clinics = [
     imageTypes: ["Pelvis X-ray", "Hip X-ray", "DDH"],
   },
   {
-    slug: "upper-limb",
-    name: "Upper Limb Clinic",
-    specialty: "Shoulder, Arm & Hand Imaging",
+    slug: "shoulder",
+    name: "Shoulder Clinic",
+    specialty: "Shoulder Imaging",
     description:
-      "Review shoulder, arm, elbow, wrist, and hand X-ray studies.",
+      "Review shoulder joint, clavicle, and upper arm X-ray studies.",
     icon: "💪",
-    imageTypes: ["Shoulder", "Arm", "Hand"],
+    imageTypes: ["Shoulder X-ray", "Clavicle"],
+  },
+  {
+    slug: "hand-wrist",
+    name: "Hand & Wrist Clinic",
+    specialty: "Hand & Wrist Imaging",
+    description:
+      "Review wrist, hand, finger, and forearm X-ray studies.",
+    icon: "🤚",
+    imageTypes: ["Wrist X-ray", "Hand X-ray"],
   },
   {
     slug: "lower-limb",
-    name: "Lower Limb Clinic",
+    name: "Leg, Knee & Foot Clinic",
     specialty: "Leg, Knee & Foot Imaging",
     description:
       "Review leg, knee, ankle, and foot X-rays for fractures and abnormalities.",
@@ -71,13 +86,56 @@ export default function DoctorClinicsPage() {
   const { capabilities } = useClinicCapabilities();
 
   /*
+    The clinics this doctor works in. A doctor is responsible for their
+    own clinics only, so the other ones are not offered to them: opening
+    one would show an empty queue and suggest they are covering a body
+    region that is not theirs.
+  */
+  const [myClinics, setMyClinics] = useState<string[]>([]);
+
+  const loadMyClinics = useCallback(async () => {
+    try {
+      const response = await fetch(`${backendBaseUrl}/api/doctor/clinic`, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        setMyClinics(
+          (data.clinics ?? []).map((clinic: { key: string }) => clinic.key),
+        );
+      }
+    } catch (error) {
+      console.error("Unable to load the doctor clinics:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMyClinics();
+  }, [loadMyClinics]);
+
+  /*
     Clinics are shown in the order the AI can actually support them, so a
     doctor sees at a glance where the preliminary result is dependable
     and where the whole reading is on them.
   */
   const tierOrder = { high: 0, moderate: 1, limited: 2, none: 3 };
 
+  /*
+    Every clinic is listed, so a doctor can see the whole department and
+    open any of them. The clinics they are responsible for come first and
+    are marked, because those are the only ones that hold cases for them:
+    the queue of another clinic is empty for them by design.
+  */
   const orderedClinics = [...clinics].sort((first, second) => {
+    const firstIsMine = myClinics.includes(first.slug) ? 0 : 1;
+    const secondIsMine = myClinics.includes(second.slug) ? 0 : 1;
+
+    if (firstIsMine !== secondIsMine) return firstIsMine - secondIsMine;
+
     const firstCapability = capabilities[first.slug];
     const secondCapability = capabilities[second.slug];
 
@@ -102,6 +160,7 @@ export default function DoctorClinicsPage() {
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-[#06142f] via-[#0a2450] to-[#071a38] px-6 py-8">
+      <PasswordChangeGate />
       <div className="mx-auto max-w-7xl">
         {/* Page heading */}
         <section className="mb-10 rounded-3xl border border-white/20 bg-white/[0.08] p-8 shadow-[0_20px_60px_rgba(0,0,0,0.3)] backdrop-blur-2xl">
@@ -176,6 +235,13 @@ export default function DoctorClinicsPage() {
                 <p className="mt-1 text-sm font-medium text-blue-50">
                   {clinic.specialty}
                 </p>
+
+                {/* Cases only reach the doctors assigned to the clinic. */}
+                {myClinics.includes(clinic.slug) && (
+                  <span className="mt-3 inline-flex rounded-full border border-white/40 bg-white/20 px-3 py-1 text-xs font-black text-white">
+                    Your clinic
+                  </span>
+                )}
               </div>
 
               {/* Clinic information */}

@@ -8,6 +8,11 @@ import {
   NextResponse,
 } from "next/server";
 
+import {
+  deliverCredentials,
+  markTemporaryPassword,
+  recordAdminAction,
+} from "@/server/admin/admin-actions";
 import { auth } from "@/server/auth/auth";
 import { databaseReady, sql } from "@/server/database/database";
 
@@ -25,6 +30,7 @@ const TEMPORARY_PASSWORD_VALIDITY_MS =
 
 type SessionUser = {
   id?: string;
+  email?: string | null;
   role?: string | string[] | null;
 };
 
@@ -336,10 +342,44 @@ export async function PATCH(
         throw databaseError;
       }
 
+      /*
+        The temporary password stops working after its expiry, and the
+        first sign in has to replace it.
+      */
+      await markTemporaryPassword(createdUserId, expiresAt);
+
+      /*
+        The doctor gets a generated sign-in address, so the details are
+        sent to the address they applied with.
+      */
+      const delivery = await deliverCredentials({
+        to: doctorRequest.email,
+        name: doctorRequest.full_name,
+        loginEmail,
+        temporaryPassword,
+        expiresAt,
+        role: "doctor",
+      });
+
+      await recordAdminAction({
+        adminId: adminUser.id,
+        adminEmail: adminUser.email,
+        action: "doctor_request_approved",
+        targetType: "user",
+        targetId: createdUserId,
+        targetLabel: doctorRequest.full_name,
+        details: delivery.delivered
+          ? `Credentials emailed to ${doctorRequest.email}`
+          : `Email not sent: ${delivery.reason}`,
+      });
+
       return NextResponse.json({
-        message:
-          "Doctor approved and temporary credentials created successfully.",
+        message: delivery.delivered
+          ? `Doctor approved. The sign-in details were emailed to ${doctorRequest.email}.`
+          : "Doctor approved. The email could not be sent, so hand the details over directly.",
         status: "Approved",
+        emailDelivered: delivery.delivered,
+        emailError: delivery.delivered ? null : delivery.reason,
         credentials: {
           email: loginEmail,
           temporaryPassword,

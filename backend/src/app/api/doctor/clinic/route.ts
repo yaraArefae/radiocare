@@ -1,8 +1,10 @@
 import { auth } from "@/server/auth/auth";
 import {
-  clinicKeyFromText,
+  CLINIC_DEFINITIONS,
+  getClinicDefinition,
   type ClinicKey,
 } from "@/server/clinics/clinic-key";
+import { clinicScope, doctorClinics } from "@/server/clinics/doctor-clinics";
 import { databaseReady, sql } from "@/server/database/database";
 
 export const runtime = "nodejs";
@@ -12,70 +14,6 @@ type SessionUser = {
   id?: string;
   role?: string | string[] | null;
 };
-
-const clinics: Array<{
-  key: ClinicKey;
-  name: string;
-  specialty: string;
-  description: string;
-}> = [
-  {
-    key: "chest",
-    name: "Chest Radiology Clinic",
-    specialty: "Chest Radiology",
-    description:
-      "Chest, lungs, ribs, and thoracic imaging cases.",
-  },
-  {
-    key: "bone",
-    name: "Bone and Orthopedic Imaging Clinic",
-    specialty: "Orthopedics / Bone Imaging",
-    description: "Bones, joints, fractures, spine, arms, and legs.",
-  },
-  {
-    key: "neuro",
-    name: "Neuro Imaging Clinic",
-    specialty: "Neurology / Brain Imaging",
-    description: "Brain, head, skull, and neuro-radiology cases.",
-  },
-  {
-    key: "cardiac",
-    name: "Cardiac Imaging Clinic",
-    specialty: "Cardiology / Cardiac Imaging",
-    description: "Heart and cardiac-related imaging cases.",
-  },
-  {
-    key: "abdominal",
-    name: "Abdominal Imaging Clinic",
-    specialty: "Abdominal Radiology",
-    description:
-      "Abdomen, pelvis, kidney, liver, and GI cases.",
-  },
-  {
-    key: "dental",
-    name: "Dental and Maxillofacial Clinic",
-    specialty: "Dental / Jaw Imaging",
-    description: "Teeth, jaw, oral, and maxillofacial imaging.",
-  },
-  {
-    key: "breast",
-    name: "Breast Imaging Clinic",
-    specialty: "Breast Imaging",
-    description: "Breast and mammography imaging cases.",
-  },
-  {
-    key: "pediatric",
-    name: "Pediatric Imaging Clinic",
-    specialty: "Pediatric Radiology",
-    description: "Radiology cases for children.",
-  },
-  {
-    key: "general",
-    name: "General Radiology Clinic",
-    specialty: "General Radiology",
-    description: "General and unclassified imaging studies.",
-  },
-];
 
 function normalizeRoles(
   role: SessionUser["role"]
@@ -89,12 +27,6 @@ function normalizeRoles(
     .filter(Boolean);
 }
 
-function getClinicDetails(key: ClinicKey) {
-  return (
-    clinics.find((clinic) => clinic.key === key) ||
-    clinics.find((clinic) => clinic.key === "general")!
-  );
-}
 
 export async function GET(request: Request) {
   try {
@@ -131,7 +63,8 @@ export async function GET(request: Request) {
     await databaseReady;
 
     const [doctorRows] = await sql.execute(
-      `SELECT full_name, specialty, subspecialty, current_workplace
+      `SELECT full_name, specialty, subspecialty, current_workplace,
+         clinics, supported_body_regions AS supportedBodyRegions
        FROM doctor_profile
        WHERE user_id = ?
        LIMIT 1`,
@@ -153,11 +86,15 @@ export async function GET(request: Request) {
       );
     }
 
-    const assignedClinicKey = clinicKeyFromText(
-      `${doctorProfile.specialty} ${doctorProfile.subspecialty || ""}`,
-    );
-
-    const clinic = getClinicDetails(assignedClinicKey);
+    /*
+      A doctor can work in several clinics, so the workspace covers all
+      of them. The first one names the page; the full list is returned so
+      the doctor can see which clinics they are responsible for.
+    */
+    const assignedClinics = doctorClinics(doctorProfile);
+    const clinic = getClinicDefinition(assignedClinics[0]);
+    const caseScope = clinicScope("s.clinic_key", assignedClinics);
+    const statScope = clinicScope("clinic_key", assignedClinics);
 
     const [casesRows] = await sql.execute(
       `SELECT s.id, p.name AS patient_name, p.age AS patient_age,
@@ -167,9 +104,9 @@ export async function GET(request: Request) {
        FROM study s
        JOIN patient p ON p.id = s.patient_id
        LEFT JOIN ai_result a ON a.study_id = s.id
-       WHERE s.clinic_key = ?
+       WHERE ${caseScope.condition}
        ORDER BY s.created_at DESC`,
-      [assignedClinicKey],
+      caseScope.values,
     );
 
     const cases = (casesRows as any[]).map((caseRow) => ({
@@ -184,8 +121,8 @@ export async function GET(request: Request) {
          SUM(CASE WHEN status = 'Waiting' THEN 1 ELSE 0 END) AS waiting,
          SUM(CASE WHEN status = 'Reviewed' THEN 1 ELSE 0 END) AS reviewed
        FROM study
-       WHERE clinic_key = ?`,
-      [assignedClinicKey],
+       WHERE ${statScope.condition}`,
+      statScope.values,
     );
 
     const stats = (statsRows as any[])[0] || {
@@ -218,6 +155,15 @@ export async function GET(request: Request) {
         status: "Active",
       },
       clinic,
+      clinics: assignedClinics.map((key) => {
+        const definition = getClinicDefinition(key);
+
+        return {
+          key: definition.key,
+          name: definition.name,
+          description: definition.description,
+        };
+      }),
       cases,
       stats: {
         total: Number(stats.total ?? 0),

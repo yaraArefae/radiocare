@@ -30,6 +30,8 @@ type Props = {
   /* The preliminary AI result, shown next to the doctor decision. */
   aiResult?: string;
   onSaved?: (status: string) => void;
+  /* Lets the page highlight the booking card while this is ticked. */
+  onFollowUpChange?: (needsFollowUp: boolean) => void;
 };
 
 const aiAgreementOptions = [
@@ -82,6 +84,7 @@ export default function CaseReport({
   mode,
   aiResult,
   onSaved,
+  onFollowUpChange,
 }: Props) {
   const [report, setReport] = useState<ReportData>(emptyReport);
   const [hasReport, setHasReport] = useState(false);
@@ -115,6 +118,7 @@ export default function CaseReport({
       if (data.report) {
         setReport({ ...emptyReport, ...data.report });
         setHasReport(true);
+        onFollowUpChange?.(Boolean(data.report.followUpRequired));
       } else {
         setHasReport(false);
       }
@@ -129,7 +133,7 @@ export default function CaseReport({
     } finally {
       setIsLoading(false);
     }
-  }, [studyId]);
+  }, [onFollowUpChange, studyId]);
 
   useEffect(() => {
     setIsLoading(true);
@@ -476,12 +480,13 @@ export default function CaseReport({
           <input
             type="checkbox"
             checked={report.followUpRequired}
-            onChange={(event) =>
+            onChange={(event) => {
               setReport((current) => ({
                 ...current,
                 followUpRequired: event.target.checked,
-              }))
-            }
+              }));
+              onFollowUpChange?.(event.target.checked);
+            }}
             className="h-5 w-5 rounded border-white/30 bg-white/10"
           />
           A follow-up visit is required

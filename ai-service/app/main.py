@@ -239,6 +239,14 @@ REGION_MODEL_REGISTRY: dict[str, dict[str, Any]] = {
         "clinic": "orthopedic",
         "folder": "lower_limb_findings",
     },
+    # Not a body region of its own: the shared fracture model is reached
+    # through this entry so it uses the same loading and caching path.
+    "fracture": {
+        "displayName": "Fracture",
+        "bodyRegion": "FRACTURE",
+        "clinic": "orthopedic",
+        "folder": "fracture_findings",
+    },
 }
 
 """
@@ -304,6 +312,19 @@ Findings that must reach the doctor as an urgent case.
 """
 URGENT_REGION_CODES = URGENT_UPPER_LIMB_CODES | {
     "MALIGNANT_BONE_LESION",
+}
+
+"""
+The shared fracture model.
+
+A region model is trained on one kind of finding: bone tumours for the
+lower limb, curvature for the spine. A fracture is the finding a doctor
+must never miss, so every bone region runs this model as well and its
+result is merged into the same findings list.
+"""
+SHARED_FRACTURE_REGIONS = {
+    "pelvis",
+    "lower-limb",
 }
 
 """
@@ -1774,9 +1795,19 @@ CLINIC_CAPABILITIES: list[dict[str, Any]] = [
         "trainingImages": 624,
     },
     {
-        "slug": "upper-limb",
-        "name": "Upper Limb Clinic",
-        "regions": ["Shoulder", "Hand & Wrist"],
+        "slug": "shoulder",
+        "name": "Shoulder Clinic",
+        "regions": ["Shoulder"],
+        "metricsFile": "shoulder/shoulder_threshold.json",
+        "metricsFormat": "shoulder",
+        "modelFile": "shoulder/shoulder_model_finetuned.keras",
+        "dataset": "Shoulder X-ray triage set",
+        "trainingImages": 8379,
+    },
+    {
+        "slug": "hand-wrist",
+        "name": "Hand & Wrist Clinic",
+        "regions": ["Hand & Wrist"],
         "metricsFile": "wrist_pediatric_findings/test_metrics.json",
         "metricsFormat": "auc",
         "modelFile": "wrist_pediatric_findings/wrist_pediatric_findings_model.keras",
@@ -1785,7 +1816,7 @@ CLINIC_CAPABILITIES: list[dict[str, Any]] = [
     },
     {
         "slug": "lower-limb",
-        "name": "Lower Limb Clinic",
+        "name": "Leg, Knee & Foot Clinic",
         "regions": ["Leg, Knee & Foot"],
         "metricsFile": "lower_limb_findings/test_metrics.json",
         "metricsFormat": "auc",
@@ -1881,7 +1912,23 @@ def read_model_quality(capability: dict[str, Any]) -> dict[str, Any]:
 
     findings: list[dict[str, Any]] = []
 
-    if capability.get("metricsFormat") == "chest":
+    if capability.get("metricsFormat") == "shoulder":
+        """
+        The shoulder model stores one number for the whole decision, and
+        it is a validation AUC rather than a held out test AUC. It is
+        reported as it was measured, without dressing it up.
+        """
+        auc = raw.get("validation_auc")
+
+        if auc is not None:
+            findings.append(
+                {
+                    "name": "Shoulder abnormality",
+                    "score": float(auc),
+                    "scoreLabel": "Validation AUC",
+                }
+            )
+    elif capability.get("metricsFormat") == "chest":
         for name, values in (raw.get("testResults") or {}).items():
             if not isinstance(values, dict):
                 continue
@@ -2323,6 +2370,146 @@ def build_region_response(
     }
 
 
+def run_region_model(entry: dict[str, Any], image_array: np.ndarray):
+    """
+    Runs one loaded region model and returns its raw probabilities.
+    """
+    model_input = np.array(image_array, dtype=np.float32, copy=True)
+    model_input = (
+        tf.keras.applications.mobilenet_v2.preprocess_input(model_input)
+    )
+
+    prediction = entry["model"].predict(model_input, verbose=0)
+    return np.array(prediction[0], dtype=np.float32)
+
+
+def collect_shared_fracture_findings(
+    image_array: np.ndarray,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """
+    Runs the shared fracture model and returns its findings, so a bone
+    region reports a fracture even when its own model was trained on a
+    different kind of finding.
+    """
+    entry = load_region_model("fracture")
+
+    if entry["model"] is None:
+        return [], None
+
+    probabilities = run_region_model(entry, image_array)
+    findings: list[dict[str, Any]] = []
+
+    for label, raw_probability in zip(entry["labels"], probabilities):
+        if label in set(entry.get("disabledLabels") or []):
+            continue
+
+        probability = float(raw_probability)
+        threshold = float(
+            entry["thresholds"].get(label, DEFAULT_FINDING_THRESHOLD)
+        )
+        label_info = describe_region_label(label)
+
+        findings.append(
+            {
+                "name": str(label_info["name"]),
+                "code": str(label_info["code"]),
+                "label": label,
+                "probability": round(probability * 100, 2),
+                "probabilityRaw": round(probability, 6),
+                "threshold": round(threshold * 100, 2),
+                "thresholdRaw": round(threshold, 6),
+                "detected": probability >= threshold,
+                "model": entry["modelPath"].name,
+            }
+        )
+
+    return findings, entry["modelPath"].name
+
+
+def merge_fracture_into_response(
+    response: dict[str, Any],
+    fracture_findings: list[dict[str, Any]],
+    fracture_model_name: str | None,
+) -> dict[str, Any]:
+    """
+    Folds the fracture result into a region response. A detected fracture
+    always becomes the primary finding and raises the case to urgent,
+    because it is the finding that changes the treatment first.
+    """
+    if not fracture_findings:
+        return response
+
+    existing_codes = {
+        str(item.get("code"))
+        for item in response.get("allFindings", [])
+    }
+
+    added = [
+        finding
+        for finding in fracture_findings
+        if str(finding["code"]) not in existing_codes
+    ]
+
+    if not added:
+        return response
+
+    all_findings = [*response.get("allFindings", []), *added]
+    all_findings.sort(
+        key=lambda item: item["probability"],
+        reverse=True,
+    )
+
+    detected = [item for item in all_findings if item["detected"]]
+
+    response["allFindings"] = all_findings
+    response["possibleFindings"] = detected
+    response["noSupportedFindingDetected"] = not detected
+    response["fractureModel"] = fracture_model_name
+    response["supportedLabels"] = [
+        *response.get("supportedLabels", []),
+        *[finding["label"] for finding in added],
+    ]
+
+    fracture_detected = any(
+        item["detected"] and item["code"] == "POSSIBLE_FRACTURE"
+        for item in added
+    )
+
+    if fracture_detected:
+        response["result"] = "ABNORMAL"
+        response["triageResult"] = "ABNORMAL"
+        response["primaryFinding"] = "Possible Fracture"
+        response["priority"] = "URGENT"
+        response["needsDoctorReview"] = True
+        response["modelAvailable"] = True
+        response["confidence"] = next(
+            item["probability"]
+            for item in added
+            if item["code"] == "POSSIBLE_FRACTURE"
+        )
+        response["message"] = (
+            "A possible fracture was detected. Orthopedic doctor "
+            "review is required."
+        )
+    elif response.get("result") == "NOT_ANALYZED":
+        """
+        Only the fracture check ran, and it found nothing. The result
+        stays NOT_ANALYZED on purpose: calling it NORMAL would drop the
+        case out of the review queue, while everything except a fracture
+        is still unchecked for this region.
+        """
+        response["modelAvailable"] = True
+        response["needsDoctorReview"] = True
+        response["priority"] = "NEEDS_REVIEW"
+        response["message"] = (
+            "No fracture was detected. Every other finding of this "
+            "region is not covered by a model yet, so the image goes to "
+            "the specialist doctor."
+        )
+
+    return response
+
+
 @app.post("/predict/region/{region_key}")
 async def predict_region(
     region_key: str,
@@ -2350,8 +2537,21 @@ async def predict_region(
         entry = load_region_model(region_key)
         model = entry["model"]
 
+        """
+        Bone regions always get the shared fracture check, whether or not
+        they have a model of their own.
+        """
+        fracture_findings: list[dict[str, Any]] = []
+        fracture_model_name = None
+
+        if region_key in SHARED_FRACTURE_REGIONS:
+            (
+                fracture_findings,
+                fracture_model_name,
+            ) = collect_shared_fracture_findings(image_array)
+
         if model is None:
-            return build_region_response(
+            response = build_region_response(
                 image=image,
                 width=width,
                 height=height,
@@ -2362,33 +2562,28 @@ async def predict_region(
                 model_name=None,
             )
 
-        model_input = np.array(
-            image_array,
-            dtype=np.float32,
-            copy=True,
-        )
-
-        model_input = (
-            tf.keras.applications.mobilenet_v2.preprocess_input(
-                model_input
+            return merge_fracture_into_response(
+                response,
+                fracture_findings,
+                fracture_model_name,
             )
-        )
 
-        prediction = model.predict(model_input, verbose=0)
-
-        return build_region_response(
+        response = build_region_response(
             image=image,
             width=width,
             height=height,
             definition=definition,
-            probabilities=np.array(
-                prediction[0],
-                dtype=np.float32,
-            ),
+            probabilities=run_region_model(entry, image_array),
             labels=entry["labels"],
             thresholds=entry["thresholds"],
             model_name=entry["modelPath"].name,
             disabled_labels=entry.get("disabledLabels"),
+        )
+
+        return merge_fracture_into_response(
+            response,
+            fracture_findings,
+            fracture_model_name,
         )
 
     except HTTPException:
@@ -2414,6 +2609,9 @@ def list_regions():
     regions = []
 
     for region_key, definition in REGION_MODEL_REGISTRY.items():
+        if region_key == "fracture":
+            continue
+
         entry = load_region_model(region_key)
 
         regions.append(

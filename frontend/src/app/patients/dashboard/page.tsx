@@ -12,6 +12,7 @@ import AppointmentCalendar, {
 import CaseChat from "@/components/CaseChat";
 import CaseReport from "@/components/CaseReport";
 import NotificationBell from "@/components/NotificationBell";
+import PasswordChangeGate from "@/components/PasswordChangeGate";
 import { authClient } from "@/client/auth/auth-client";
 
 const BACKEND_URL =
@@ -366,6 +367,7 @@ export default function PatientDashboardPage() {
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-blue-950 text-white">
+      <PasswordChangeGate />
       <div className="pointer-events-none fixed inset-0 bg-gradient-to-br from-slate-950 via-blue-950 to-cyan-950" />
       <div className="pointer-events-none fixed -left-40 top-16 h-[500px] w-[500px] rounded-full bg-blue-500/25 blur-[160px]" />
       <div className="pointer-events-none fixed -right-40 bottom-0 h-[540px] w-[540px] rounded-full bg-cyan-400/20 blur-[170px]" />

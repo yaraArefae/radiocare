@@ -1,24 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 
 import { authClient } from "@/client/auth/auth-client";
 
-type ReviewStatus = "Waiting" | "Urgent";
+const backendBaseUrl = (
+  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000"
+).replace(/\/$/, "");
 
 type ReviewStudy = {
   id: string;
   patient: string;
   patientId: string;
-  age: number;
   bodyRegion: string;
   view: string;
-  uploadedAt: string;
-  aiResult: string;
-  confidence: number;
-  status: ReviewStatus;
+  createdAt: string;
+  aiResult: string | null;
+  primaryFinding: string | null;
+  confidence: number | string | null;
+  priority: string;
+  status: string;
+  clinicKey: string;
 };
 
 type SessionUser = {
@@ -27,68 +31,47 @@ type SessionUser = {
   role?: string | string[] | null;
 };
 
-const reviewStudies: ReviewStudy[] = [
-  {
-    id: "ST-1001",
-    patient: "Patient 001",
-    patientId: "PT-001",
-    age: 54,
-    bodyRegion: "Chest",
-    view: "PA",
-    uploadedAt: "2026-06-26 09:15",
-    aiResult: "Possible Cardiomegaly",
-    confidence: 81,
-    status: "Waiting",
-  },
-  {
-    id: "ST-1002",
-    patient: "Patient 002",
-    patientId: "PT-002",
-    age: 31,
-    bodyRegion: "Wrist",
-    view: "AP",
-    uploadedAt: "2026-06-26 10:40",
-    aiResult: "Possible Fracture",
-    confidence: 87,
-    status: "Urgent",
-  },
-  {
-    id: "ST-1004",
-    patient: "Patient 004",
-    patientId: "PT-004",
-    age: 42,
-    bodyRegion: "Dental",
-    view: "Panoramic",
-    uploadedAt: "2026-06-25 14:10",
-    aiResult: "Possible Deep Caries",
-    confidence: 76,
-    status: "Waiting",
-  },
-  {
-    id: "ST-1006",
-    patient: "Patient 006",
-    patientId: "PT-006",
-    age: 67,
-    bodyRegion: "Knee",
-    view: "Lateral",
-    uploadedAt: "2026-06-25 15:35",
-    aiResult: "Possible Joint Space Narrowing",
-    confidence: 84,
-    status: "Waiting",
-  },
-  {
-    id: "ST-1007",
-    patient: "Patient 007",
-    patientId: "PT-007",
-    age: 24,
-    bodyRegion: "Chest",
-    view: "AP",
-    uploadedAt: "2026-06-26 12:05",
-    aiResult: "Possible Pneumothorax",
-    confidence: 91,
-    status: "Urgent",
-  },
-];
+/*
+  A study still needs a doctor when the AI did not clear it as normal and
+  no doctor has finished it yet. It is the same rule the clinic queues
+  use, so the two screens never disagree about what is still waiting.
+*/
+function needsReview(study: ReviewStudy) {
+  const triage = String(study.aiResult ?? "").trim().toUpperCase();
+  const status = String(study.status ?? "").toLowerCase();
+
+  const isFinished =
+    status.includes("completed") ||
+    status.includes("reviewed") ||
+    status.includes("approved");
+
+  return triage !== "NORMAL" && !isFinished;
+}
+
+function isUrgent(study: ReviewStudy) {
+  const value = `${study.priority} ${study.status}`.toLowerCase();
+
+  return value.includes("urgent");
+}
+
+function formatUploaded(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "—";
+
+  return new Intl.DateTimeFormat("en", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function formatConfidence(value: ReviewStudy["confidence"]) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) return "—";
+
+  return `${Math.round(parsed)}%`;
+}
 
 export default function WaitingReviewPage() {
   const router = useRouter();
@@ -102,38 +85,86 @@ export default function WaitingReviewPage() {
   const [bodyRegion, setBodyRegion] = useState("All");
   const [priority, setPriority] = useState("All");
 
-  useEffect(() => {
-    if (!isPending && !session) {
-      router.replace("/");
+  const [studies, setStudies] = useState<ReviewStudy[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  /*
+    The studies come from the API, which already limits them to what the
+    signed in user may see: an administrator gets every case, a doctor
+    only the clinics they work in.
+  */
+  const loadStudies = useCallback(async () => {
+    try {
+      setIsLoading(true);
+
+      const response = await fetch(`${backendBaseUrl}/api/studies`, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.message || "Unable to load the studies.");
+      }
+
+      setStudies((data.studies ?? []).filter(needsReview));
+      setErrorMessage("");
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Unable to load the studies.",
+      );
+    } finally {
+      setIsLoading(false);
     }
-  }, [isPending, session, router]);
+  }, []);
+
+  useEffect(() => {
+    if (isPending) return;
+
+    if (!session) {
+      router.replace("/");
+      return;
+    }
+
+    void loadStudies();
+  }, [isPending, loadStudies, router, session]);
 
   const filteredStudies = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
 
-    return reviewStudies.filter((study) => {
+    return studies.filter((study) => {
+      const haystack = [
+        study.id,
+        study.patient,
+        study.patientId,
+        study.primaryFinding,
+        study.aiResult,
+      ]
+        .join(" ")
+        .toLowerCase();
+
       const matchesSearch =
-        !normalizedSearch ||
-        study.id.toLowerCase().includes(normalizedSearch) ||
-        study.patient.toLowerCase().includes(normalizedSearch) ||
-        study.patientId.toLowerCase().includes(normalizedSearch) ||
-        study.aiResult.toLowerCase().includes(normalizedSearch);
+        !normalizedSearch || haystack.includes(normalizedSearch);
 
       const matchesRegion =
-        bodyRegion === "All" ||
-        study.bodyRegion === bodyRegion;
+        bodyRegion === "All" || study.bodyRegion === bodyRegion;
 
       const matchesPriority =
         priority === "All" ||
-        study.status === priority;
+        (priority === "Urgent" ? isUrgent(study) : !isUrgent(study));
 
-      return (
-        matchesSearch &&
-        matchesRegion &&
-        matchesPriority
-      );
+      return matchesSearch && matchesRegion && matchesPriority;
     });
-  }, [search, bodyRegion, priority]);
+  }, [bodyRegion, priority, search, studies]);
+
+  /* The body regions that really occur, instead of a fixed list. */
+  const availableRegions = useMemo(
+    () => [...new Set(studies.map((study) => study.bodyRegion))].sort(),
+    [studies],
+  );
 
   if (isPending) {
     return (
@@ -172,16 +203,20 @@ export default function WaitingReviewPage() {
     return null;
   }
 
-  const urgentCount = reviewStudies.filter(
-    (study) => study.status === "Urgent"
-  ).length;
+  const urgentCount = studies.filter(isUrgent).length;
 
-  const averageConfidence = Math.round(
-    reviewStudies.reduce(
-      (total, study) => total + study.confidence,
-      0
-    ) / reviewStudies.length
-  );
+  /*
+    Only the studies that actually carry a confidence value are averaged,
+    so a case the AI never scored does not drag the number down.
+  */
+  const scored = studies
+    .map((study) => Number(study.confidence))
+    .filter((value) => Number.isFinite(value) && value > 0);
+
+  const averageConfidence =
+    scored.length > 0
+      ? Math.round(scored.reduce((total, value) => total + value, 0) / scored.length)
+      : 0;
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-blue-950 text-white">
@@ -254,7 +289,7 @@ export default function WaitingReviewPage() {
         <div className="mt-8 grid gap-5 sm:grid-cols-3">
           <StatisticCard
             title="Waiting Studies"
-            value={String(reviewStudies.length)}
+            value={String(studies.length)}
             description="Require doctor review"
           />
 
@@ -267,7 +302,7 @@ export default function WaitingReviewPage() {
 
           <StatisticCard
             title="Average Confidence"
-            value={`${averageConfidence}%`}
+            value={averageConfidence > 0 ? `${averageConfidence}%` : "—"}
             description="Across pending AI findings"
           />
         </div>
@@ -311,10 +346,12 @@ export default function WaitingReviewPage() {
               className="w-full rounded-xl border border-white/20 bg-blue-950/70 px-4 py-3 text-white outline-none transition focus:border-cyan-300 focus:ring-4 focus:ring-cyan-300/10"
             >
               <option value="All">All body regions</option>
-              <option value="Chest">Chest</option>
-              <option value="Wrist">Wrist</option>
-              <option value="Knee">Knee</option>
-              <option value="Dental">Dental</option>
+
+              {availableRegions.map((region) => (
+                <option key={region} value={region}>
+                  {region}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -341,6 +378,36 @@ export default function WaitingReviewPage() {
           </div>
         </div>
 
+        {errorMessage && (
+          <p className="mt-6 rounded-2xl border border-rose-300/30 bg-rose-500/10 px-5 py-4 font-bold text-rose-100">
+            {errorMessage}
+          </p>
+        )}
+
+        {!isLoading && filteredStudies.length === 0 && (
+          <div className="mt-6 rounded-2xl border border-white/15 bg-white/10 px-6 py-12 text-center backdrop-blur-2xl">
+            <span className="text-4xl">✅</span>
+
+            <p className="mt-3 text-xl font-bold text-white">
+              {studies.length === 0
+                ? "No case is waiting for review"
+                : "No case matches these filters"}
+            </p>
+
+            <p className="mt-2 text-slate-300">
+              {studies.length === 0
+                ? "Every case in your clinics has been reviewed."
+                : "Clear the search or the filters to see the rest."}
+            </p>
+          </div>
+        )}
+
+        {isLoading && (
+          <p className="mt-6 text-center font-semibold text-cyan-100">
+            Loading studies...
+          </p>
+        )}
+
         {/* Review cards */}
         <div className="mt-6 grid gap-5 xl:grid-cols-2">
           {filteredStudies.map((study) => (
@@ -357,7 +424,7 @@ export default function WaitingReviewPage() {
 
                     <span
                       className={
-                        study.status === "Urgent"
+                        isUrgent(study)
                           ? "rounded-full border border-red-300/30 bg-red-500/20 px-3 py-1 text-xs font-bold text-red-100"
                           : "rounded-full border border-amber-300/30 bg-amber-400/20 px-3 py-1 text-xs font-bold text-amber-100"
                       }
@@ -371,7 +438,7 @@ export default function WaitingReviewPage() {
                   </p>
 
                   <p className="mt-1 text-sm text-slate-400">
-                    {study.patientId} · {study.age} years
+                    {study.clinicKey} clinic
                   </p>
                 </div>
 
@@ -381,7 +448,7 @@ export default function WaitingReviewPage() {
                   </p>
 
                   <p className="mt-1 text-2xl font-bold text-cyan-300">
-                    {study.confidence}%
+                    {formatConfidence(study.confidence)}
                   </p>
                 </div>
               </div>
@@ -399,12 +466,16 @@ export default function WaitingReviewPage() {
 
                 <InformationBox
                   label="Uploaded"
-                  value={study.uploadedAt}
+                  value={formatUploaded(study.createdAt)}
                 />
 
                 <InformationBox
                   label="AI finding"
-                  value={study.aiResult}
+                  value={
+                    study.primaryFinding ||
+                    study.aiResult ||
+                    "Not analysed yet"
+                  }
                   highlight
                 />
               </div>
@@ -423,7 +494,7 @@ export default function WaitingReviewPage() {
                 <button
                   type="button"
                   onClick={() =>
-                    router.push(`/studies/${study.id}/review`)
+                    router.push(`/studies/${study.id}#review`)
                   }
                   className="flex-1 rounded-xl border border-cyan-300/20 bg-gradient-to-r from-blue-600 to-cyan-500 px-5 py-3 font-semibold text-white shadow-[0_12px_35px_rgba(14,116,255,0.28)] transition hover:-translate-y-0.5 hover:from-blue-500 hover:to-cyan-400"
                 >

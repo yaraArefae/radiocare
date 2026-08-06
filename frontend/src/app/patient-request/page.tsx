@@ -35,6 +35,14 @@ export default function PatientRequestPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isSent, setIsSent] = useState(false);
 
+  /*
+    Sending the form again with the same email updates the request, and
+    an email that already has an account is pointed at the sign-in
+    screen. The confirmation says which of the two happened.
+  */
+  const [resultMessage, setResultMessage] = useState("");
+  const [alreadyRegistered, setAlreadyRegistered] = useState(false);
+
   function updateField(field: keyof FormState, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
   }
@@ -61,8 +69,13 @@ export default function PatientRequestPage() {
         throw new Error(data.message || "Unable to send the request.");
       }
 
+      setResultMessage(data.message ?? "");
+      setAlreadyRegistered(Boolean(data.alreadyRegistered));
       setIsSent(true);
-      setForm(emptyForm);
+
+      if (!data.alreadyRegistered) {
+        setForm(emptyForm);
+      }
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -78,23 +91,36 @@ export default function PatientRequestPage() {
     return (
       <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#06142f] via-[#0a2450] to-[#071a38] p-6">
         <section className="w-full max-w-lg rounded-3xl border border-white/20 bg-white/[0.08] p-10 text-center shadow-[0_25px_80px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
-          <div className="text-6xl">✅</div>
+          <div className="text-6xl">
+            {alreadyRegistered ? "👤" : "✅"}
+          </div>
 
           <h1 className="mt-5 text-3xl font-black text-white">
-            Request sent
+            {alreadyRegistered ? "You already have an account" : "Request sent"}
           </h1>
 
           <p className="mt-3 leading-7 text-slate-300">
-            An administrator will review your information and create your
-            account. You will receive your sign-in details by email.
+            {resultMessage ||
+              "An administrator will review your information and create your account. You will receive your sign-in details by email."}
           </p>
 
-          <Link
-            href="/"
-            className="mt-7 inline-flex rounded-2xl border border-cyan-300/30 bg-cyan-400/20 px-6 py-3 font-bold text-white transition hover:bg-cyan-400/30"
-          >
-            Back to home
-          </Link>
+          <div className="mt-7 flex flex-wrap justify-center gap-3">
+            <Link
+              href="/"
+              className="inline-flex rounded-2xl border border-cyan-300/30 bg-cyan-400/20 px-6 py-3 font-bold text-white transition hover:bg-cyan-400/30"
+            >
+              {alreadyRegistered ? "Go to sign in" : "Back to home"}
+            </Link>
+
+            {alreadyRegistered && (
+              <Link
+                href="/forgot-password"
+                className="inline-flex rounded-2xl border border-white/20 bg-white/10 px-6 py-3 font-bold text-slate-200 transition hover:text-white"
+              >
+                I forgot my password
+              </Link>
+            )}
+          </div>
         </section>
       </main>
     );

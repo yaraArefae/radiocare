@@ -53,6 +53,14 @@ DATASET_PRESETS = {
     "triage_multilabel": [
         "shoulder_abnormality",
     ],
+    "fracatlas": [
+        "fracture_visible",
+    ],
+    "combined": [
+        "bone_lesion",
+        "benign_lesion",
+        "malignant_lesion",
+    ],
 }
 
 LABELS: list[str] = []
@@ -470,15 +478,33 @@ def main() -> None:
             f"positives={int(truth.sum())}"
         )
 
-    report = classification_report(
-        test_truth,
-        predictions,
-        target_names=LABELS,
-        zero_division=0,
-    )
-    print("\n" + report)
-
+    """
+    The trained model is written before anything else. A failure while
+    formatting a report must never throw away a run that took an hour.
+    """
     model.save(final_model_path)
+
+    """
+    With a single label scikit-learn reports the two classes of a binary
+    problem, so the class names have to match that shape.
+    """
+    if len(LABELS) == 1:
+        report = classification_report(
+            test_truth[:, 0],
+            predictions[:, 0],
+            labels=[0, 1],
+            target_names=[f"no {LABELS[0]}", LABELS[0]],
+            zero_division=0,
+        )
+    else:
+        report = classification_report(
+            test_truth,
+            predictions,
+            target_names=LABELS,
+            zero_division=0,
+        )
+
+    print("\n" + report)
 
     thresholds_path.write_text(
         json.dumps(

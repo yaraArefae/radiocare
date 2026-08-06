@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { auth } from "@/server/auth/auth";
 import { databaseReady, sql } from "@/server/database/database";
+import { notifyAdmins } from "@/server/notifications/notifications";
 
 export const runtime = "nodejs";
 
@@ -290,6 +291,13 @@ export async function POST(request: NextRequest) {
         medicalLicensePath, specialtyCertificatePath, cvPath,
         JSON.stringify(additionalDocuments), true],
     );
+
+    await notifyAdmins({
+      type: "registration_request",
+      title: "New doctor registration request",
+      body: `${fullName} (${specialty}) applied for a doctor account.`,
+      link: "/admin/doctor-requests",
+    });
 
     return NextResponse.json(
       {
