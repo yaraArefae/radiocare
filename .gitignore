@@ -98,9 +98,9 @@ __pycache__/
 ai-service/data/
 backend/storage/studies/
 
-# Trained AI models
-ai-service/models/
-*.keras
-*.h5
-*.pt
-*.pth
+# Trained AI models are kept in the repository so the project runs
+# without retraining. Only the intermediate checkpoints are left out:
+# they are large, and the finished model files are what the service
+# loads.
+*.weights.h5
+*_best.keras
