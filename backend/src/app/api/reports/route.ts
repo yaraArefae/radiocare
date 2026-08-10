@@ -1,3 +1,4 @@
+import type { ClinicKey } from "@/server/clinics/clinic-key";
 import { clinicScope, doctorClinics } from "@/server/clinics/doctor-clinics";
 import { auth } from "@/server/auth/auth";
 import { databaseReady, sql } from "@/server/database/database";
@@ -11,6 +12,23 @@ export const dynamic = "force-dynamic";
   a doctor sees the reports of their own clinic, a patient sees only the
   approved reports of their own studies, and an admin sees all of them.
 */
+/*
+  Narrows a doctor to one of their own clinics when the screen asks for
+  it. The requested clinic is intersected with what the doctor already
+  covers, never added to it: a link can focus the view, it can never
+  widen what the doctor is allowed to see.
+*/
+function narrowToRequestedClinic(
+  clinics: ClinicKey[],
+  requested: string | null,
+) {
+  const wanted = String(requested ?? "").trim().toLowerCase();
+
+  if (!wanted) return clinics;
+
+  return clinics.filter((clinic) => clinic === wanted);
+}
+
 export async function GET(request: Request) {
   try {
     const session = await auth.api.getSession({
@@ -62,7 +80,13 @@ export async function GET(request: Request) {
         );
       }
 
-      const scope = clinicScope("s.clinic_key", doctorClinics(profile));
+      const scope = clinicScope(
+        "s.clinic_key",
+        narrowToRequestedClinic(
+          doctorClinics(profile),
+          new URL(request.url).searchParams.get("clinic"),
+        ),
+      );
 
       scopeClause = `WHERE ${scope.condition}`;
       scopeValues.push(...scope.values);

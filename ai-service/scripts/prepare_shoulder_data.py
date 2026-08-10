@@ -2,10 +2,8 @@ from pathlib import Path
 import random
 import shutil
 
-# تثبيت التقسيم حتى تبقى النتائج نفسها في كل تشغيل
 RANDOM_SEED = 42
 
-# نسب التقسيم
 TRAIN_RATIO = 0.70
 VAL_RATIO = 0.15
 TEST_RATIO = 0.15

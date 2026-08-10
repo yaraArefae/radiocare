@@ -15,6 +15,26 @@ export default function ChangePasswordPage() {
     isPending: isSessionPending,
   } = authClient.useSession();
 
+  /*
+    Where this account belongs once the password is set. A newly approved
+    patient is forced through this page, and sending everybody back to
+    the administration dashboard dropped them on a screen that is not
+    theirs.
+  */
+  const homePath = (() => {
+    const role = session?.user?.role as string | string[] | undefined;
+
+    const roles = (Array.isArray(role) ? role : String(role ?? "").split(","))
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (roles.includes("admin")) return "/dashboard";
+    if (roles.includes("doctor")) return "/doctor/clinic";
+    if (roles.includes("patient")) return "/patients/dashboard";
+
+    return "/dashboard";
+  })();
+
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -179,10 +199,10 @@ export default function ChangePasswordPage() {
           )}
 
           <Link
-            href="/dashboard"
+            href={homePath}
             className="mt-7 inline-flex w-full items-center justify-center rounded-xl border border-cyan-300/20 bg-gradient-to-r from-blue-600 to-cyan-500 px-5 py-3.5 font-semibold text-white shadow-[0_14px_40px_rgba(14,116,255,0.30)] transition hover:-translate-y-0.5 hover:from-blue-500 hover:to-cyan-400"
           >
-            Return to dashboard
+            Continue to my dashboard
           </Link>
 
           <button
@@ -211,10 +231,10 @@ export default function ChangePasswordPage() {
         </div>
 
         <Link
-          href="/dashboard"
+          href={homePath}
           className="text-sm font-semibold text-cyan-300 transition hover:text-cyan-100"
         >
-          Back to dashboard
+          Back
         </Link>
       </div>
 

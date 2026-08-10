@@ -54,14 +54,24 @@ export default function PatientRequestPage() {
       setIsSending(true);
       setErrorMessage("");
 
-      const response = await fetch(
-        `${backendBaseUrl}/api/patient-requests`,
-        {
+      /*
+        A request that never left the browser has to say so. Reporting it
+        the same way as a rejected form would let a patient believe their
+        details were sent to the clinic when nothing arrived at all.
+      */
+      let response: Response;
+
+      try {
+        response = await fetch(`${backendBaseUrl}/api/patient-requests`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...form, age: Number(form.age) }),
-        },
-      );
+        });
+      } catch {
+        throw new Error(
+          "Your request could not be sent because the server could not be reached. Nothing was saved, so please try again in a moment.",
+        );
+      }
 
       const data = await response.json();
 
@@ -151,12 +161,6 @@ export default function PatientRequestPage() {
             reviews the request and then sends you the sign-in details.
           </p>
 
-          {errorMessage && (
-            <p className="mt-6 rounded-2xl border border-rose-300/30 bg-rose-500/10 px-4 py-3 font-bold text-rose-100">
-              {errorMessage}
-            </p>
-          )}
-
           <form onSubmit={submitRequest} className="mt-7">
             <div className="grid gap-5 sm:grid-cols-2">
               <Field
@@ -196,6 +200,7 @@ export default function PatientRequestPage() {
 
               <label className="block text-sm font-bold text-slate-200">
                 Gender
+                <span className="text-cyan-300"> *</span>
                 <select
                   value={form.gender}
                   onChange={(event) =>
@@ -236,6 +241,18 @@ export default function PatientRequestPage() {
                 className="mt-2 w-full resize-none rounded-2xl border border-white/20 bg-white/[0.07] px-4 py-3 font-normal text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/60"
               />
             </label>
+
+            {/*
+              The failure is shown right at the button. It used to appear
+              only at the top of the page, far above the fold, so a
+              patient pressed send, saw nothing change, and left believing
+              their request had been sent.
+            */}
+            {errorMessage && (
+              <p className="mt-7 rounded-2xl border border-rose-300/40 bg-rose-500/15 px-5 py-4 font-bold text-rose-100">
+                {errorMessage}
+              </p>
+            )}
 
             <button
               type="submit"

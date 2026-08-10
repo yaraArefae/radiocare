@@ -111,6 +111,28 @@ export default function PatientDashboardPage() {
   const [chatError, setChatError] = useState<string>("");
 
   const [caseThreads, setCaseThreads] = useState<CaseThread[]>([]);
+  /*
+    The follow-up section is folded away by default. It carries a card
+    per case and a whole conversation, which pushed the rest of the page
+    far down; the unread count stays visible on the closed header so
+    nothing is hidden without a trace.
+  */
+  const [isMessagesOpen, setIsMessagesOpen] = useState(false);
+
+  /* Unread messages across all cases, shown on the closed header. */
+  const unreadMessageCount = useMemo(
+    () => caseThreads.reduce((total, item) => total + item.unreadCount, 0),
+    [caseThreads],
+  );
+
+  /*
+    An unread answer from a doctor opens the section by itself. Folding
+    the page tidily is worth nothing if it buries the reply the patient
+    is waiting for.
+  */
+  useEffect(() => {
+    if (unreadMessageCount > 0) setIsMessagesOpen(true);
+  }, [unreadMessageCount]);
   const [selectedCaseId, setSelectedCaseId] = useState<string>("");
   const [isLoadingCases, setIsLoadingCases] = useState(true);
 
@@ -453,7 +475,12 @@ export default function PatientDashboardPage() {
 
         {/* Private follow-up with the doctor for each reviewed case */}
         <section className="mt-8 rounded-[30px] border border-white/10 bg-white/10 p-6">
-          <div className="flex flex-wrap items-center justify-between gap-4">
+          <button
+            type="button"
+            onClick={() => setIsMessagesOpen((open) => !open)}
+            aria-expanded={isMessagesOpen}
+            className="flex w-full flex-wrap items-center justify-between gap-4 text-left"
+          >
             <div>
               <p className="text-sm font-black uppercase tracking-[0.2em] text-cyan-200">
                 Follow up your case
@@ -463,18 +490,27 @@ export default function PatientDashboardPage() {
               </h2>
             </div>
 
-            {caseThreads.some((item) => item.unreadCount > 0) && (
-              <span className="rounded-full border border-cyan-300/30 bg-cyan-400/15 px-3 py-1 text-xs font-bold text-cyan-100">
-                {caseThreads.reduce(
-                  (total, item) => total + item.unreadCount,
-                  0,
-                )}{" "}
-                new messages
-              </span>
-            )}
-          </div>
+            <div className="flex items-center gap-3">
+              {unreadMessageCount > 0 && (
+                <span className="rounded-full border border-cyan-300/30 bg-cyan-400/15 px-3 py-1 text-xs font-bold text-cyan-100">
+                  {unreadMessageCount} new messages
+                </span>
+              )}
 
-          {isLoadingCases ? (
+              {!isMessagesOpen && caseThreads.length > 0 && (
+                <span className="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-bold text-slate-200">
+                  {caseThreads.length}{" "}
+                  {caseThreads.length === 1 ? "case" : "cases"}
+                </span>
+              )}
+
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-lg font-black text-cyan-100">
+                {isMessagesOpen ? "−" : "+"}
+              </span>
+            </div>
+          </button>
+
+          {!isMessagesOpen ? null : isLoadingCases ? (
             <div className="mt-6 rounded-3xl border border-white/10 bg-white/10 p-6 text-slate-300">
               Loading your cases...
             </div>

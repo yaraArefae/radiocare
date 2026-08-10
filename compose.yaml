@@ -29,5 +29,22 @@ services:
     ports:
       - "8081:80"
 
+  # A mail server for development.
+  #
+  # It accepts everything the application sends and shows it in a web
+  # page at http://localhost:8025 instead of delivering it. That makes
+  # the whole approval flow testable, and the message can be read
+  # exactly as the patient would receive it, without needing an account
+  # at a mail provider.
+  #
+  # To deliver to real inboxes, point the SMTP settings at a real
+  # provider instead. Nothing else in the application changes.
+  mail:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
 volumes:
   radiocare_mariadb_data:

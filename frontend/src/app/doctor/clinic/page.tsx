@@ -92,6 +92,7 @@ export default function DoctorClinicsPage() {
     region that is not theirs.
   */
   const [myClinics, setMyClinics] = useState<string[]>([]);
+  const [isLoadingClinics, setIsLoadingClinics] = useState(true);
 
   const loadMyClinics = useCallback(async () => {
     try {
@@ -110,6 +111,8 @@ export default function DoctorClinicsPage() {
       }
     } catch (error) {
       console.error("Unable to load the doctor clinics:", error);
+    } finally {
+      setIsLoadingClinics(false);
     }
   }, []);
 
@@ -125,17 +128,21 @@ export default function DoctorClinicsPage() {
   const tierOrder = { high: 0, moderate: 1, limited: 2, none: 3 };
 
   /*
-    Every clinic is listed, so a doctor can see the whole department and
-    open any of them. The clinics they are responsible for come first and
-    are marked, because those are the only ones that hold cases for them:
-    the queue of another clinic is empty for them by design.
+    A doctor sees the clinics they are responsible for and nothing else.
+    The other clinics hold no case for them, so offering those would only
+    lead to an empty queue and suggest they cover a body region that is
+    not theirs.
+
+    An account with no clinic of its own, such as an administrator, sees
+    all of them instead of an empty page.
   */
-  const orderedClinics = [...clinics].sort((first, second) => {
-    const firstIsMine = myClinics.includes(first.slug) ? 0 : 1;
-    const secondIsMine = myClinics.includes(second.slug) ? 0 : 1;
+  const visibleClinics = isLoadingClinics
+    ? []
+    : myClinics.length > 0
+      ? clinics.filter((clinic) => myClinics.includes(clinic.slug))
+      : clinics;
 
-    if (firstIsMine !== secondIsMine) return firstIsMine - secondIsMine;
-
+  const orderedClinics = [...visibleClinics].sort((first, second) => {
     const firstCapability = capabilities[first.slug];
     const secondCapability = capabilities[second.slug];
 
@@ -208,6 +215,12 @@ export default function DoctorClinicsPage() {
           </div>
         </section>
 
+        {isLoadingClinics && (
+          <p className="text-center font-bold text-cyan-100">
+            Loading your clinic...
+          </p>
+        )}
+
         {/* Clinics */}
         <section className="grid gap-7 md:grid-cols-2 xl:grid-cols-3">
           {orderedClinics.map((clinic) => (
@@ -236,12 +249,6 @@ export default function DoctorClinicsPage() {
                   {clinic.specialty}
                 </p>
 
-                {/* Cases only reach the doctors assigned to the clinic. */}
-                {myClinics.includes(clinic.slug) && (
-                  <span className="mt-3 inline-flex rounded-full border border-white/40 bg-white/20 px-3 py-1 text-xs font-black text-white">
-                    Your clinic
-                  </span>
-                )}
               </div>
 
               {/* Clinic information */}

@@ -197,6 +197,14 @@ export async function sendAccountCredentialsEmail({
       auth: { user: smtpUser, pass: smtpPassword },
     });
 
+    /*
+      The connection is checked before the message is built, so a wrong
+      password or an unreachable host is reported as exactly that. Without
+      this the administrator only learns that "the email failed", with no
+      way to tell a typo in the settings from a rejected recipient.
+    */
+    await transporter.verify();
+
     await transporter.sendMail({
       from:
         process.env.SMTP_FROM || `"RadioCare" <${smtpUser}>`,
@@ -285,6 +293,11 @@ RadioCare
   } catch (error) {
     console.error("Unable to send the credentials email:", error);
 
+    /*
+      The reason is passed on to the admin screen. It is the message of
+      the mail server, which names the real problem: authentication
+      refused, host not found, or the recipient rejected.
+    */
     return {
       delivered: false as const,
       reason:

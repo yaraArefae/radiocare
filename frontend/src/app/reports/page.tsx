@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { authClient } from "@/client/auth/auth-client";
@@ -43,6 +43,17 @@ const agreementStyle: Record<string, string> = {
 
 export default function ReportsPage() {
   const router = useRouter();
+
+  /*
+    A clinic passed in the address narrows this page to that one clinic.
+    The server only ever narrows within what the doctor already covers,
+    so the link focuses the view and cannot widen it.
+  */
+  const searchParams = useSearchParams();
+  const clinicFilter = searchParams.get("clinic") ?? "";
+  const clinicQuery = clinicFilter
+    ? `?clinic=${encodeURIComponent(clinicFilter)}`
+    : "";
   const { data: session, isPending } = authClient.useSession();
 
   const [reports, setReports] = useState<ReportRow[]>([]);
@@ -55,11 +66,14 @@ export default function ReportsPage() {
     try {
       setIsLoading(true);
 
-      const response = await fetch(`${backendBaseUrl}/api/reports`, {
-        method: "GET",
-        credentials: "include",
-        cache: "no-store",
-      });
+      const response = await fetch(
+        `${backendBaseUrl}/api/reports${clinicQuery}`,
+        {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+        },
+      );
 
       const data = await response.json();
 

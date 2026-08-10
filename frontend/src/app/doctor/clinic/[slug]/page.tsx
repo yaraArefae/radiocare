@@ -4,9 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import ClinicAiStatus, {
-  useClinicCapabilities,
-} from "@/components/ClinicAiStatus";
+import { useClinicCapabilities } from "@/components/ClinicAiStatus";
 import NotificationBell from "@/components/NotificationBell";
 import { authClient } from "@/client/auth/auth-client";
 
@@ -129,34 +127,38 @@ const clinicData: Record<string, ClinicInformation> = {
   },
 };
 
+/*
+  What this clinic offers besides the review queue above it.
+
+  The queue already lists the studies that are waiting, so a card that
+  opened the same list again was removed: it sent the doctor to a second
+  screen showing what they were already looking at.
+
+  Every path carries the clinic, so the destination really is this
+  clinic. Without it a doctor covering more than one clinic opened these
+  from the shoulder page and saw every clinic they cover.
+*/
 const clinicActions = [
   {
     title: "Clinic Patients",
     description:
-      "View and manage patients assigned to this specialized clinic.",
+      "Everyone with a study in this clinic, including those with nothing waiting.",
     path: "/patients",
     icon: "👥",
   },
   {
-    title: "Imaging Studies",
+    title: "Medical Reports",
     description:
-      "Review uploaded X-rays, AI results, and pending imaging studies.",
-    path: "/studies",
-    icon: "🩻",
+      "Every report written in this clinic, gathered in one place.",
+    path: "/reports",
+    icon: "📄",
   },
   {
     title: "New Study",
     description:
-      "Create a new radiology study and assign it to a clinic patient.",
+      "Upload for a patient who came to the clinic instead of uploading themselves.",
     path: "/new-study",
     icon: "➕",
-  },
-  {
-    title: "Medical Reports",
-    description:
-      "Review, prepare, and manage diagnostic medical reports.",
-    path: "/reports",
-    icon: "📄",
   },
 ];
 
@@ -231,6 +233,13 @@ export default function ClinicDetailsPage() {
   const clinic = clinicData[slug];
 
   const { capabilities } = useClinicCapabilities();
+
+  /*
+    The queue opens on the newest few cases. A clinic can hold dozens,
+    and a wall of cards buries the sections under it; the count of what
+    is hidden stays on the button so nothing disappears silently.
+  */
+  const [showAllCases, setShowAllCases] = useState(false);
   const capability = capabilities[slug];
 
   const [studies, setStudies] = useState<ClinicStudy[]>([]);
@@ -286,6 +295,9 @@ export default function ClinicDetailsPage() {
   useEffect(() => {
     void loadClinicStudies();
   }, [loadClinicStudies]);
+
+  const visibleStudies = showAllCases ? studies : studies.slice(0, 2);
+  const hiddenCaseCount = studies.length - visibleStudies.length;
 
   const statistics = useMemo(() => {
     const assignedPatients = new Set(
@@ -504,41 +516,6 @@ export default function ClinicDetailsPage() {
           </article>
         </section>
 
-        {/* What the AI can and cannot do in this clinic */}
-        {capability && (
-          <section className="mt-7 rounded-3xl border border-white/15 bg-white/[0.07] p-6 shadow-lg backdrop-blur-2xl">
-            <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan-300">
-              AI capability
-            </p>
-
-            <h2 className="mt-2 text-2xl font-black text-white">
-              What the model can do here
-            </h2>
-
-            <div className="mt-4">
-              <ClinicAiStatus capability={capability} />
-            </div>
-
-            {capability.findings.length > 0 && (
-              <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {capability.findings.map((finding) => (
-                  <div
-                    key={finding.name}
-                    className="rounded-2xl border border-white/10 bg-white/[0.05] p-3"
-                  >
-                    <p className="text-sm font-bold text-white">
-                      {finding.name}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      {finding.scoreLabel} {finding.score.toFixed(3)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        )}
-
         {/* Abnormal cases for this clinic only */}
         <section className="mt-8 rounded-3xl border border-white/15 bg-white/[0.07] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.25)] backdrop-blur-2xl md:p-8">
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -591,7 +568,7 @@ export default function ClinicDetailsPage() {
             </div>
           ) : (
             <div className="mt-6 grid gap-4 lg:grid-cols-2">
-              {studies.map((study) => (
+              {visibleStudies.map((study) => (
                 <article
                   key={study.id}
                   className="rounded-3xl border border-white/15 bg-white/[0.06] p-5 transition hover:border-cyan-300/35 hover:bg-white/[0.09]"
@@ -658,6 +635,20 @@ export default function ClinicDetailsPage() {
                 </article>
               ))}
             </div>
+          )}
+
+          {studies.length > 2 && (
+            <button
+              type="button"
+              onClick={() => setShowAllCases((shown) => !shown)}
+              className="mt-6 w-full rounded-2xl border border-white/20 bg-white/[0.06] px-6 py-4 font-black text-cyan-100 transition hover:border-cyan-300/45 hover:bg-white/[0.10]"
+            >
+              {showAllCases
+                ? "Show fewer cases"
+                : `Show ${hiddenCaseCount} more case${
+                    hiddenCaseCount === 1 ? "" : "s"
+                  }`}
+            </button>
           )}
         </section>
 

@@ -1,8 +1,20 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# Only two kinds of files are kept out of this repository:
+#   1. secrets
+#   2. anything a command recreates on the machine that clones it
+#
+# Everything else is committed, including the trained models and the
+# training checkpoints, so a fresh clone runs without retraining.
 
-# dependencies
-/node_modules
-/.pnp
+# ---- Secrets -----------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+
+# ---- Recreated by "npm install" ----------------------------------------
+node_modules/
+**/node_modules/
+.pnp
 .pnp.*
 .yarn/*
 !.yarn/patches
@@ -10,97 +22,44 @@
 !.yarn/releases
 !.yarn/versions
 
-# testing
-/coverage
-
-# next.js
-/frontend/.next/
-/backend/.next/
+# ---- Recreated by "npm run dev" or "npm run build" ---------------------
+.next/
+**/.next/
 /out/
-
-# production
 /build
+/coverage
+*.tsbuildinfo
+next-env.d.ts
+.vercel
 
-# misc
-.DS_Store
-*.pem
+# ---- Recreated by "pip install -r requirements.txt" --------------------
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
 
-# debug
+# ---- Written by the application while it runs --------------------------
+# The X-ray images patients upload. They belong to rows in a database
+# that a fresh clone does not have, so they are of no use elsewhere, and
+# they are medical images in a public repository.
+backend/storage/
+
+# The old local database file, replaced by MariaDB in Docker.
+backend/legacy-sqlite/
+*.db
+*.sqlite
+*.sqlite3
+
+# ---- Logs and editor noise ---------------------------------------------
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
-# Environment and secrets
-.env
-.env.local
-.env.*.local
-
-# Database files
-backend/radiology-auth.db
-backend/radiology-auth.db-shm
-backend/radiology-auth.db-wal
-backend/legacy-sqlite/
-
-# Uploaded medical images
-backend/storage/
-
-# Python AI service
-ai-service/.venv/
-ai-service/__pycache__/
-ai-service/app/__pycache__/
-ai-service/**/*.pyc
-
-# Training data and trained models
-ai-service/data/
-ai-service/models/*.pth
-ai-service/models/*.pt
-
-# Next.js
-node_modules/
-.next/
-node_modules
-.next
-.env
-.env.local
-.env.*
-*.db
-*.sqlite
-*.sqlite3
 .DS_Store
-# Dependencies and builds
-node_modules/
-**/node_modules/
-.next/
-**/.next/
 
-# Python environment and cache
-.venv/
-**/.venv/
-__pycache__/
-*.pyc
-
-# Environment secrets
-.env
-.env.*
-!.env.example
-
-# Medical images and uploaded files
+# ---- Datasets ----------------------------------------------------------
+# 41 GB of raw X-rays from public datasets. GitHub refuses a repository
+# this size, so they cannot live here. ai-service/scripts/prepare_*.py
+# rebuilds every one of them from its original download; see the README.
 ai-service/data/
-backend/storage/studies/
-
-# Trained AI models are kept in the repository so the project runs
-# without retraining. Only the intermediate checkpoints are left out:
-# they are large, and the finished model files are what the service
-# loads.
-*.weights.h5
-*_best.keras

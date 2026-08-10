@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import NotificationBell from "@/components/NotificationBell";
@@ -44,6 +44,17 @@ function formatDate(value: string | null) {
 
 export default function PatientsPage() {
   const router = useRouter();
+
+  /*
+    A clinic passed in the address narrows this page to that one clinic.
+    The server only ever narrows within what the doctor already covers,
+    so the link focuses the view and cannot widen it.
+  */
+  const searchParams = useSearchParams();
+  const clinicFilter = searchParams.get("clinic") ?? "";
+  const clinicQuery = clinicFilter
+    ? `?clinic=${encodeURIComponent(clinicFilter)}`
+    : "";
   const { data: session, isPending } = authClient.useSession();
 
   const [patients, setPatients] = useState<PatientRow[]>([]);
@@ -58,11 +69,14 @@ export default function PatientsPage() {
     try {
       setIsLoading(true);
 
-      const response = await fetch(`${backendBaseUrl}/api/patients`, {
-        method: "GET",
-        credentials: "include",
-        cache: "no-store",
-      });
+      const response = await fetch(
+        `${backendBaseUrl}/api/patients${clinicQuery}`,
+        {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+        },
+      );
 
       const data = await response.json();
 

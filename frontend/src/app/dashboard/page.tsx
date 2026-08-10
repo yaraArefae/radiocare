@@ -78,6 +78,20 @@ function isToday(value: string) {
   return date.toDateString() === new Date().toDateString();
 }
 
+/*
+  The two management cards use these, so the patient side and the doctor
+  side keep the same button shape, weight and order. They had drifted:
+  different gradients, different font weights, and the main action came
+  first on one card and second on the other.
+*/
+const primaryAction =
+  "min-w-[13.5rem] rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 py-3 text-center font-bold text-white shadow-[0_14px_40px_rgba(14,116,255,0.3)] transition hover:-translate-y-0.5 hover:from-blue-500 hover:to-cyan-400";
+
+const secondaryAction =
+  "min-w-[13.5rem] rounded-xl border border-white/20 bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:-translate-y-0.5 hover:border-cyan-300/40 hover:bg-white/15";
+
+const actionRow = "flex flex-wrap gap-3 xl:justify-end";
+
 function formatConfidence(value: Study["confidence"]) {
   const parsed = Number(value);
 
@@ -96,6 +110,13 @@ export default function DashboardPage() {
 
   const [studies, setStudies] = useState<Study[]>([]);
   const [studiesError, setStudiesError] = useState("");
+  /*
+    The waiting list is folded away by default. It is a wide table that
+    filled the page, while the count of what is waiting is the part an
+    administrator reads at a glance; that count stays on the closed
+    header so nothing is hidden without a trace.
+  */
+  const [isStudiesOpen, setIsStudiesOpen] = useState(false);
 
   /*
     The studies come from the API, which already limits them to what the
@@ -209,10 +230,22 @@ export default function DashboardPage() {
         .map((role) => role.trim().toLowerCase())
         .filter(Boolean);
 
-      const isDoctor = userRoles.includes("doctor");
-
-      if (isDoctor) {
+      /*
+        This screen belongs to the administration. A doctor and a patient
+        each have their own home, and one of the ways to land here is the
+        forced password change after an account is approved, which sent
+        everybody to the same place.
+      */
+      if (userRoles.includes("doctor")) {
         void router.replace("/doctor/clinic");
+        return;
+      }
+
+      if (
+        userRoles.includes("patient") &&
+        !userRoles.includes("admin")
+      ) {
+        void router.replace("/patients/dashboard");
       }
     }
   }, [isPending, session, router]);
@@ -227,6 +260,10 @@ export default function DashboardPage() {
   */
   const [pendingPatientRequests, setPendingPatientRequests] =
     useState(0);
+  const [patientRequestTotals, setPatientRequestTotals] = useState({
+    total: 0,
+    approved: 0,
+  });
 
   useEffect(() => {
     if (isPending || !session) return;
@@ -251,7 +288,7 @@ export default function DashboardPage() {
           `${
             process.env.NEXT_PUBLIC_BACKEND_URL ??
             "http://localhost:4000"
-          }/api/patient-requests?status=Pending`,
+          }/api/patient-requests`,
           {
             method: "GET",
             credentials: "include",
@@ -264,9 +301,25 @@ export default function DashboardPage() {
         const data = await response.json();
 
         if (isActive && data.success) {
+          const applications = data.applications ?? [];
+
+          const statusOf = (application: { status?: string }) =>
+            String(application.status ?? "").toLowerCase();
+
           setPendingPatientRequests(
-            (data.applications ?? []).length,
+            applications.filter(
+              (application: { status?: string }) =>
+                statusOf(application) === "pending",
+            ).length,
           );
+
+          setPatientRequestTotals({
+            total: applications.length,
+            approved: applications.filter(
+              (application: { status?: string }) =>
+                statusOf(application) === "approved",
+            ).length,
+          });
         }
       } catch (error) {
         console.error(
@@ -442,7 +495,13 @@ export default function DashboardPage() {
 
       <div className="relative z-10 mx-auto flex max-w-[1700px]">
         {/* Sidebar */}
-        <aside className="sticky top-[81px] hidden h-[calc(100vh-81px)] w-72 shrink-0 overflow-y-auto border-r border-white/15 bg-blue-950/35 p-5 backdrop-blur-2xl lg:block">
+        {/*
+          The bar itself stretches to the full height of the page, so its
+          background never stops halfway down and leaves a bare strip.
+          The menu inside is what sticks and scrolls, not the bar.
+        */}
+        <aside className="hidden w-72 shrink-0 self-stretch border-r border-white/15 bg-blue-950/35 backdrop-blur-2xl lg:block">
+          <div className="sticky top-[81px] max-h-[calc(100vh-81px)] overflow-y-auto p-5">
           <p className="mb-4 px-3 text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
             Main Menu
           </p>
@@ -598,15 +657,6 @@ export default function DashboardPage() {
                   Add Doctor Request
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() =>
-                    router.push("/login-attempts")
-                  }
-                  className="w-full rounded-xl border border-transparent px-4 py-3 text-left font-medium text-slate-200 transition hover:border-white/15 hover:bg-white/10"
-                >
-                  Login Attempts
-                </button>
               </>
             )}
           </nav>
@@ -630,6 +680,7 @@ export default function DashboardPage() {
               <p>General X-ray model: Active</p>
               <p>Dental model: Active</p>
             </div>
+          </div>
           </div>
         </aside>
 
@@ -677,13 +728,13 @@ export default function DashboardPage() {
                   </p>
                 </div>
 
-                <div className="flex flex-wrap gap-3">
+                <div className={actionRow}>
                   <button
                     type="button"
                     onClick={() =>
                       router.push("/admin/patient-requests")
                     }
-                    className="rounded-xl bg-gradient-to-r from-blue-600 to-cyan-400 px-5 py-3 font-bold text-white"
+                    className={primaryAction}
                   >
                     Open Patient Requests
                   </button>
@@ -691,10 +742,34 @@ export default function DashboardPage() {
                   <button
                     type="button"
                     onClick={() => router.push("/admin/overview")}
-                    className="rounded-xl border border-white/20 bg-white/10 px-5 py-3 font-semibold text-white transition hover:bg-white/15"
+                    className={secondaryAction}
                   >
                     Admin Overview
                   </button>
+                </div>
+              </div>
+
+              {/* The same three counters the doctor card carries. */}
+              <div className="mt-6 grid gap-4 sm:grid-cols-3">
+                <div className="rounded-2xl border border-white/15 bg-white/10 p-4">
+                  <p className="text-sm text-slate-300">Total requests</p>
+                  <p className="mt-2 text-3xl font-bold text-white">
+                    {patientRequestTotals.total}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4">
+                  <p className="text-sm text-amber-100">Waiting for action</p>
+                  <p className="mt-2 text-3xl font-bold text-white">
+                    {pendingPatientRequests}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-green-300/20 bg-green-300/10 p-4">
+                  <p className="text-sm text-green-100">Approved patients</p>
+                  <p className="mt-2 text-3xl font-bold text-white">
+                    {patientRequestTotals.approved}
+                  </p>
                 </div>
               </div>
             </section>
@@ -768,28 +843,47 @@ export default function DashboardPage() {
           {/* Studies table */}
           <div className="mt-9 rounded-2xl border border-white/15 bg-white/10 p-6 shadow-[0_25px_70px_rgba(0,0,0,0.24)] backdrop-blur-2xl">
             <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-              <div>
-                <h3 className="text-xl font-bold text-white">
-                  Studies waiting for review
-                </h3>
+              <button
+                type="button"
+                onClick={() => setIsStudiesOpen((open) => !open)}
+                aria-expanded={isStudiesOpen}
+                className="flex flex-1 items-center gap-4 text-left"
+              >
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-lg font-black text-cyan-100">
+                  {isStudiesOpen ? "−" : "+"}
+                </span>
 
-                <p className="mt-1 text-sm text-slate-300">
-                  Recent medical X-ray studies requiring
-                  doctor review.
-                </p>
-              </div>
+                <span>
+                  <span className="flex flex-wrap items-center gap-3">
+                    <h3 className="text-xl font-bold text-white">
+                      Studies waiting for review
+                    </h3>
+
+                    {waitingStudies.length > 0 && (
+                      <span className="rounded-full border border-amber-300/30 bg-amber-400/15 px-3 py-1 text-xs font-bold text-amber-100">
+                        {waitingStudies.length} waiting
+                      </span>
+                    )}
+                  </span>
+
+                  <span className="mt-1 block text-sm text-slate-300">
+                    Recent medical X-ray studies requiring doctor review.
+                  </span>
+                </span>
+              </button>
 
               <button
                 type="button"
                 onClick={() =>
                   router.push("/waiting-review")
                 }
-                className="rounded-xl border border-cyan-300/20 bg-gradient-to-r from-blue-600 to-cyan-500 px-5 py-3 font-semibold text-white shadow-[0_12px_35px_rgba(14,116,255,0.28)] transition hover:-translate-y-0.5 hover:from-blue-500 hover:to-cyan-400"
+                className="shrink-0 rounded-xl border border-cyan-300/20 bg-gradient-to-r from-blue-600 to-cyan-500 px-5 py-3 font-semibold text-white shadow-[0_12px_35px_rgba(14,116,255,0.28)] transition hover:-translate-y-0.5 hover:from-blue-500 hover:to-cyan-400"
               >
                 View all studies
               </button>
             </div>
 
+            {isStudiesOpen && (
             <div className="mt-6 overflow-x-auto rounded-xl border border-white/10 bg-blue-950/20 backdrop-blur-xl">
               <table className="w-full min-w-[1000px] text-left">
                 <thead>
@@ -900,6 +994,7 @@ export default function DashboardPage() {
                 </tbody>
               </table>
             </div>
+            )}
           </div>
 
           {/* Disclaimer */}
@@ -1025,17 +1120,7 @@ function AdminDoctorManagement() {
           </p>
         </div>
 
-        <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={() =>
-              router.push("/doctor-request")
-            }
-            className="rounded-xl border border-white/20 bg-white/10 px-5 py-3 font-semibold text-white transition hover:bg-white/15"
-          >
-            Add Doctor Request
-          </button>
-
+        <div className={actionRow}>
           <button
             type="button"
             onClick={() =>
@@ -1043,9 +1128,19 @@ function AdminDoctorManagement() {
                 "/admin/doctor-requests"
               )
             }
-            className="rounded-xl bg-gradient-to-r from-blue-600 to-cyan-500 px-5 py-3 font-semibold text-white shadow-[0_14px_40px_rgba(14,116,255,0.3)] transition hover:-translate-y-0.5"
+            className={primaryAction}
           >
             Review Doctor Requests
+          </button>
+
+          <button
+            type="button"
+            onClick={() =>
+              router.push("/doctor-request")
+            }
+            className={secondaryAction}
+          >
+            Add Doctor Request
           </button>
         </div>
       </div>
