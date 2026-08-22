@@ -60,7 +60,6 @@ const imagingViews: Record<string, string[]> = {
   Chest: ["PA", "AP", "Lateral"],
   Shoulder: ["AP", "Axillary", "Scapular Y"],
   "Hand & Wrist": ["PA", "AP", "Lateral", "Oblique"],
-  "Head & Skull": ["AP", "Lateral", "Towne"],
   Spine: [
     "Cervical AP",
     "Cervical Lateral",
@@ -70,7 +69,8 @@ const imagingViews: Record<string, string[]> = {
     "Lumbar Lateral",
   ],
   "Pelvis & Hip": ["AP", "Lateral", "Frog leg"],
-  "Leg, Knee & Foot": ["AP", "Lateral", "Oblique", "Mortise", "Sunrise"],
+  /* Mortise is an ankle view; the patellar Sunrise view left with the knee. */
+  "Leg & Foot": ["AP", "Lateral", "Oblique", "Mortise"],
 };
 
 export default function NewStudyPage() {
@@ -207,7 +207,6 @@ export default function NewStudyPage() {
         "Spine Clinic",
         ["spine", "spinal", "cervical", "lumbar", "vertebra", "scoliosis"],
       ],
-      ["Head & Skull Clinic", ["head", "skull", "cranial", "brain", "facial"]],
       ["Pelvis & Hip Clinic", ["pelvis", "pelvic", "hip", "ddh", "sacrum"]],
       [
         "Shoulder Clinic",
@@ -218,11 +217,13 @@ export default function NewStudyPage() {
         ["hand", "wrist", "finger", "thumb", "carpal", "forearm", "elbow"],
       ],
       [
-        "Leg, Knee & Foot Clinic",
+        "Leg & Foot Clinic",
         [
           "lower limb",
           "leg",
           "femur",
+          /* Kept so a study filed as a knee before the change still
+             names the clinic that reads the rest of the limb. */
           "knee",
           "tibia",
           "fibula",

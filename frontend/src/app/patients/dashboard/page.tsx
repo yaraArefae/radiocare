@@ -11,6 +11,8 @@ import AppointmentCalendar, {
 } from "@/components/AppointmentCalendar";
 import CaseChat from "@/components/CaseChat";
 import CaseReport from "@/components/CaseReport";
+import RateDoctor from "@/components/RateDoctor";
+import SupportInboxCard from "@/components/SupportInboxCard";
 import NotificationBell from "@/components/NotificationBell";
 import PasswordChangeGate from "@/components/PasswordChangeGate";
 import { authClient } from "@/client/auth/auth-client";
@@ -446,10 +448,16 @@ export default function PatientDashboardPage() {
             className="rounded-[26px] border border-cyan-300/25 bg-gradient-to-br from-blue-600/80 to-cyan-500/70 p-6 text-left shadow-[0_20px_60px_rgba(14,116,255,0.25)] transition hover:-translate-y-1"
           >
             <p className="text-sm font-semibold text-cyan-100">New analysis</p>
-            <h2 className="mt-3 text-2xl font-bold">Upload X-ray</h2>
+            {/*
+              The card no longer says X-ray. A patient with a CT on a
+              disc read "Upload X-ray" and had no reason to think this
+              was the place for it, and the study type inside is where
+              the two are actually told apart.
+            */}
+            <h2 className="mt-3 text-2xl font-bold">Upload a study</h2>
             <p className="mt-3 text-sm leading-6 text-blue-50/90">
-              Start a new radiology study and submit an image for preliminary AI
-              analysis.
+              An X-ray image, or a CT or MRI study, for preliminary AI
+              analysis and a doctor&apos;s reading.
             </p>
           </Link>
 
@@ -471,6 +479,17 @@ export default function PatientDashboardPage() {
               review.
             </p>
           </div>
+        </div>
+
+        {/*
+          The case conversation below reaches the doctor reading a study.
+          This one reaches the administration, for everything that is
+          about the account rather than about an X-ray. It is a tile
+          rather than a link so an answer is visible from here, without
+          opening anything.
+        */}
+        <div className="mt-6">
+          <SupportInboxCard viewerRole="patient" />
         </div>
 
         {/* Private follow-up with the doctor for each reviewed case */}
@@ -584,6 +603,16 @@ export default function PatientDashboardPage() {
                       studyId={selectedCaseId}
                       mode="patient"
                     />
+
+                    {/*
+                      Asks for a rating right under the report it is
+                      about, and only once that report is confirmed.
+                      The component asks the server whether this study
+                      can be rated and draws nothing when it cannot, so
+                      a patient still waiting for a reading is not shown
+                      a row of stars for it.
+                    */}
+                    <RateDoctor studyId={selectedCaseId} />
 
                     <CaseChat studyId={selectedCaseId} />
                   </>

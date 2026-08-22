@@ -54,6 +54,10 @@ function getContentType(
     return "application/dicom";
   }
 
+  /*
+    Everything else, the volumetric formats above all, is handed over as
+    a download: no browser draws a NIfTI.
+  */
   return "application/octet-stream";
 }
 

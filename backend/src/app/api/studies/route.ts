@@ -47,6 +47,15 @@ type AiDetailsPayload = {
   detectedRegion: string;
   detectedClinic: string;
   message: string;
+  /*
+   * Sent only by a model that answers normal or abnormal without naming
+   * a finding, which is why its finding lists arrive empty. The hand
+   * model works this way. Without these the study page cannot tell that
+   * kind of reading apart from one where findings were looked for and
+   * none were found, and it tells the doctor the wrong thing.
+   */
+  abnormalityProbability?: number;
+  decisionThreshold?: number;
 };
 
 /*
@@ -84,6 +93,37 @@ function getTextValue(
   return typeof value === "string"
     ? value.trim()
     : "";
+}
+
+/*
+ * Reads a percentage the AI service sent. Anything that is not a number
+ * between 0 and 100 is treated as absent rather than stored, so a
+ * malformed field cannot end up drawn on a doctor's screen as a score.
+ */
+function getPercentageValue(
+  formData: FormData,
+  fieldName: string
+): number | undefined {
+  const rawValue = getTextValue(
+    formData,
+    fieldName
+  );
+
+  if (!rawValue) {
+    return undefined;
+  }
+
+  const value = Number(rawValue);
+
+  if (
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > 100
+  ) {
+    return undefined;
+  }
+
+  return value;
 }
 
 function getFindingArray(
@@ -181,7 +221,42 @@ function getFindingArray(
   }
 }
 
+/*
+  The volumetric formats: a whole CT or MRI in one file rather than a
+  single film.
+
+  A browser reports no useful content type for any of them, so unlike a
+  JPEG they can only be recognised by their name.
+*/
+const volumeExtensions = [
+  ".nii.gz",
+  ".nii",
+  ".npy",
+];
+
+function getVolumeExtension(fileName: string) {
+  const lowered = fileName.toLowerCase();
+
+  return (
+    volumeExtensions.find((extension) =>
+      lowered.endsWith(extension)
+    ) ?? ""
+  );
+}
+
 function getFileExtension(file: File) {
+  /*
+    ".nii.gz" is two extensions, and path.extname sees only the ".gz",
+    so the volumetric names are matched whole and before anything else.
+  */
+  const volumeExtension = getVolumeExtension(
+    file.name
+  );
+
+  if (volumeExtension) {
+    return volumeExtension;
+  }
+
   const originalExtension = path
     .extname(file.name)
     .toLowerCase();
@@ -387,6 +462,18 @@ export async function POST(request: Request) {
       "allFindings"
     );
 
+    const abnormalityProbability =
+      getPercentageValue(
+        formData,
+        "abnormalityProbability"
+      );
+
+    const decisionThreshold =
+      getPercentageValue(
+        formData,
+        "decisionThreshold"
+      );
+
     const aiPriority =
       getTextValue(
         formData,
@@ -508,6 +595,17 @@ export async function POST(request: Request) {
       "detectedClinic"
     );
 
+    /*
+      The doctor the patient picked inside the clinic, when they picked
+      one. It stays optional: a patient may leave the choice to the
+      clinic, and every study uploaded before doctors could be chosen
+      has nobody recorded here.
+    */
+    const chosenDoctorId = getTextValue(
+      formData,
+      "doctorId",
+    );
+
     const imageValue = formData.get("image");
 
     /* Validate patient and study information */
@@ -618,27 +716,36 @@ export async function POST(request: Request) {
       );
     }
 
-    const maximumFileSize =
-      20 * 1024 * 1024;
+    const extension =
+      getFileExtension(imageFile);
+
+    const isDicom =
+      extension === ".dcm";
+
+    /*
+      A volume is a stack of hundreds of slices, so the limit that fits
+      a single film would reject nearly every real CT.
+    */
+    const isVolume =
+      volumeExtensions.includes(extension);
+
+    const maximumFileSize = isVolume
+      ? 300 * 1024 * 1024
+      : 20 * 1024 * 1024;
 
     if (imageFile.size > maximumFileSize) {
       return Response.json(
         {
           success: false,
-          message:
-            "The image must be smaller than 20 MB.",
+          message: isVolume
+            ? "The study must be smaller than 300 MB."
+            : "The image must be smaller than 20 MB.",
         },
         {
           status: 400,
         }
       );
     }
-
-    const extension =
-      getFileExtension(imageFile);
-
-    const isDicom =
-      extension === ".dcm";
 
     const allowedImageTypes = [
       "image/jpeg",
@@ -651,12 +758,16 @@ export async function POST(request: Request) {
         imageFile.type
       );
 
-    if (!isDicom && !isRegularImage) {
+    if (
+      !isDicom &&
+      !isVolume &&
+      !isRegularImage
+    ) {
       return Response.json(
         {
           success: false,
           message:
-            "Only JPG, PNG, WEBP and DICOM files are allowed.",
+            "Only JPG, PNG, WEBP, DICOM and NIfTI (.nii, .nii.gz, .npy) files are allowed.",
         },
         {
           status: 400,
@@ -710,7 +821,18 @@ export async function POST(request: Request) {
     await sql.execute(
       `INSERT INTO patient (id, name, age, gender, symptoms, medical_history, status)
        VALUES (?, ?, ?, ?, ?, ?, 'Active')
-       ON DUPLICATE KEY UPDATE name=VALUES(name), age=VALUES(age),
+       ON DUPLICATE KEY UPDATE name=VALUES(name),
+       /*
+         The age and gender on the patient row are the latest known,
+         and the study keeps its own copy of what was entered for it.
+
+         They are still updated here because a person's record should
+         show their current age, and a correction typed on a new upload
+         is usually a correction. What changed is that this no longer
+         reaches backwards: the studies already taken keep the age they
+         were taken at, which is the number a doctor read them with.
+       */
+       age=VALUES(age),
        gender=VALUES(gender),
        symptoms=COALESCE(VALUES(symptoms), symptoms),
        medical_history=COALESCE(VALUES(medical_history), medical_history),
@@ -737,6 +859,41 @@ export async function POST(request: Request) {
     );
 
     /*
+      The chosen doctor is checked against the clinic the study is
+      going to, not taken on trust.
+
+      The doctor id arrives in a form field, and a form field is
+      whatever the browser sent. Storing it unchecked would let a study
+      be addressed to a doctor who does not work in that clinic, or to
+      an id that is not a doctor at all, and the case would then sit in
+      a queue nobody opens. A mismatch is not an error the patient
+      should see: the study still reaches the clinic, and the clinic
+      still reads it.
+    */
+    let assignedDoctorId: string | null = null;
+
+    if (chosenDoctorId) {
+      const [doctorRows] = await sql.execute(
+        `SELECT id, specialty, subspecialty, clinics,
+                supported_body_regions AS supportedBodyRegions
+         FROM doctor_profile
+         WHERE id = ? AND status = 'Active'`,
+        [chosenDoctorId],
+      );
+
+      const doctor = (doctorRows as any[])[0];
+
+      if (doctor && servesClinic(doctor, clinicKey)) {
+        assignedDoctorId = String(doctor.id);
+      } else {
+        console.warn(
+          `Study upload named doctor ${chosenDoctorId}, who does not ` +
+            `serve the ${clinicKey} clinic. Sending it to the clinic.`,
+        );
+      }
+    }
+
+    /*
      * A case the AI could not clear goes straight into the review queue,
      * anything else waits for the doctor in the normal order.
      */
@@ -756,14 +913,23 @@ export async function POST(request: Request) {
       `INSERT INTO study
        (id, patient_id, body_region, imaging_view, priority, clinical_notes,
         symptoms, medical_history,
-        image_path, original_file_name, file_type, file_size, status, uploaded_by, clinic_key)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        image_path, original_file_name, file_type, file_size, status, uploaded_by, clinic_key,
+        study_kind, doctor_id, patient_age, patient_gender)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [studyId, patientId, bodyRegion, imagingView, normalizedPriority,
         clinicalNotes || null, symptoms || null, medicalHistory || null,
         relativeFilePath, imageFile.name,
         imageFile.type || (isDicom ? "application/dicom" : null),
         imageFile.size, studyStatus,
-        sessionUser.id, clinicKey],
+        sessionUser.id, clinicKey,
+        isVolume ? "VOLUME" : "IMAGE",
+        assignedDoctorId,
+        /*
+          Recorded against this study so a later upload with a different
+          age cannot rewrite what a doctor already read.
+        */
+        age,
+        gender],
     );
     const savedPredictedFinding =
       predictedFinding ||
@@ -785,6 +951,8 @@ export async function POST(request: Request) {
       detectedClinic:
         detectedClinic || clinicKey,
       message: aiExplanation,
+      abnormalityProbability,
+      decisionThreshold,
     };
 
     if (savedPredictedFinding) {
@@ -971,6 +1139,17 @@ export async function GET(request: Request) {
           );
         }
 
+        /*
+          A doctor sees their whole clinic, including the studies a
+          patient addressed to a colleague.
+
+          Hiding those would honour the patient's choice right up to the
+          day that doctor is on leave, and then the study would sit in a
+          queue nobody opens. The choice is carried in doctorId instead,
+          so the doctor a patient picked can be shown their own cases
+          first while no case is ever invisible to the clinic that owes
+          it a reading.
+        */
         const scope = clinicScope("s.clinic_key", doctorClinics(profile));
 
         whereConditions.push(scope.condition);
@@ -1032,6 +1211,8 @@ export async function GET(request: Request) {
          p.name AS patient,
          s.body_region AS bodyRegion,
          s.imaging_view AS view,
+         s.study_kind AS studyKind,
+         s.doctor_id AS doctorId,
          DATE(s.created_at) AS date,
          s.priority,
          s.status,

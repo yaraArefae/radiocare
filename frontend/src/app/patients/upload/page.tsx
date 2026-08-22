@@ -1,6 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+
+import DoctorCard, {
+  Avatar,
+  type PublicDoctor,
+} from "@/components/DoctorCard";
 import {
   ChangeEvent,
   FormEvent,
@@ -12,10 +18,28 @@ type BodyRegion =
   | "CHEST"
   | "SHOULDER"
   | "HAND_WRIST"
-  | "HEAD_SKULL"
   | "SPINE"
   | "PELVIS_HIP"
-  | "LOWER_LIMB";
+  | "LOWER_LIMB"
+  /*
+    The volumetric studies. A CT or an MRI is a stack of slices rather
+    than a single film, so it is uploaded as one file, read by a
+    different model, and cannot be shown as a picture.
+  */
+  | "CHEST_CT"
+  | "CHEST_CT_LUNGS"
+  | "CHEST_CT_RIBS"
+  | "HEAD_MRI"
+  | "CHEST_CT_TUMOUR"
+  | "ABDOMEN_CT_COLON"
+  | "ABDOMEN_CT_LIVER_VESSELS"
+  | "ABDOMEN_CT_PANCREAS"
+  | "ABDOMEN_CT_LIVER"
+  | "ABDOMEN_CT_KIDNEY"
+  | "SPINE_CT"
+  | "PELVIS_CT"
+  | "LOWER_LIMB_CT"
+  | "SHOULDER_CT";
 
 /*
   NOT_ANALYZED means no AI model is installed for that region yet, so
@@ -56,6 +80,16 @@ type AnalysisResult = {
   disclaimer: string;
   modelName?: string;
   modelVersion?: string;
+  /*
+    A model that answers normal or abnormal without naming a finding
+    sends its score and the cut point it was compared against, and no
+    finding list. The hand model is one: it was trained to say whether a
+    hand looks injured, not which injury it is.
+  */
+  modelScope?: string;
+  abnormalityProbability?: number;
+  decisionThreshold?: number;
+  detectedRegion?: string;
 };
 
 type RegionConfig = {
@@ -65,11 +99,34 @@ type RegionConfig = {
   clinicSlug: string;
   clinicName: string;
   clinicalNotes: string;
+  /*
+    A volumetric region sends a whole CT or MRI instead of a film. The
+    file field of its endpoint is named "study", not "image", and the
+    scope note says what the model actually read, because these models
+    are trained on a cropped part of a scan rather than on all of it.
+  */
+  isVolume?: boolean;
+  scopeNote?: string;
+  /*
+    The anatomy the study belongs to, which is what decides the clinic.
+    It is spelled out only where the name of the option differs from it:
+    "Chest CT — Lung Nodule" is a chest study, and if the AI service is
+    unreachable that is still what has to be saved.
+  */
+  bodyRegionCode?: string;
 };
 
+/*
+  8001 is the port scripts/dev.mjs starts the service on, and the one
+  the README documents. This default used to be 8000, which nothing
+  in this project has ever listened on, so every upload failed with
+  "Failed to fetch" on any machine that had no .env.local setting it.
+  A default that only works when somebody remembers to override it is
+  not a default.
+*/
 const AI_SERVICE_URL =
   process.env.NEXT_PUBLIC_AI_SERVICE_URL ??
-  "http://localhost:8000";
+  "http://localhost:8001";
 
 const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL ??
@@ -77,11 +134,43 @@ const BACKEND_URL =
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
+/*
+  A volume holds hundreds of slices, so it is allowed to be far larger
+  than a single film. The AI service and the backend enforce the same
+  limit, this one only spares the patient a long upload that would be
+  refused at the end of it.
+*/
+const MAX_VOLUME_FILE_SIZE = 300 * 1024 * 1024;
+
 const allowedImageTypes = [
   "image/jpeg",
   "image/png",
   "image/webp",
 ];
+
+/*
+  Browsers report no useful content type for a NIfTI, so volumetric
+  uploads are recognised by the end of their name.
+*/
+const allowedVolumeExtensions = [
+  ".nii.gz",
+  ".nii",
+  ".npy",
+  /*
+    What a hospital actually sends: one DICOM per slice, or the whole
+    folder of them zipped. The service stacks them back into a volume.
+  */
+  ".dcm",
+  ".zip",
+];
+
+function isVolumeFileName(fileName: string) {
+  const lowered = fileName.toLowerCase();
+
+  return allowedVolumeExtensions.some(
+    (extension) => lowered.endsWith(extension),
+  );
+}
 
 const REGION_CONFIG: Record<BodyRegion, RegionConfig> = {
   CHEST: {
@@ -120,15 +209,6 @@ const REGION_CONFIG: Record<BodyRegion, RegionConfig> = {
     its own clinic, and each starts using AI as soon as a model for it
     is installed in the AI service.
   */
-  HEAD_SKULL: {
-    label: "Head & Skull",
-    endpoint: "/predict/region/head",
-    imagingView: "Head & Skull X-ray",
-    clinicSlug: "head",
-    clinicName: "Head & Skull Clinic",
-    clinicalNotes:
-      "Head or skull X-ray uploaded by the patient for doctor review.",
-  },
   SPINE: {
     label: "Spine",
     endpoint: "/predict/region/spine",
@@ -148,19 +228,253 @@ const REGION_CONFIG: Record<BodyRegion, RegionConfig> = {
       "Pelvis or hip X-ray uploaded by the patient for doctor review.",
   },
   LOWER_LIMB: {
-    label: "Leg, Knee & Foot",
+    label: "Leg & Foot",
     endpoint: "/predict/region/lower-limb",
     imagingView: "Lower Limb X-ray",
     clinicSlug: "lower-limb",
-    clinicName: "Leg, Knee & Foot Clinic",
+    clinicName: "Leg & Foot Clinic",
     clinicalNotes:
-      "Leg, knee, ankle, or foot X-ray uploaded by the patient for doctor review.",
+      "Leg, ankle, or foot X-ray uploaded by the patient for doctor review.",
+  },
+  /*
+    The volumetric studies. Each of them reaches the same clinic its
+    X-ray counterpart does, so a doctor reads a CT and a film of the
+    same body region in one queue.
+
+    The four at the end have no trained model yet. They are offered all
+    the same: the study is saved and sent to the specialist, which is
+    better for the patient than being told the upload is impossible.
+  */
+  CHEST_CT_LUNGS: {
+    label: "Chest CT (whole scan) - Lung Involvement",
+    endpoint: "/predict/volume/chest-ct-lungs",
+    bodyRegionCode: "CHEST",
+    imagingView: "Chest CT",
+    clinicSlug: "chest",
+    clinicName: "Chest Clinic",
+    clinicalNotes:
+      "Chest CT uploaded by the patient for preliminary AI analysis of lung involvement.",
+    isVolume: true,
+    scopeNote:
+      "This is the only model here that reads a whole scan as it comes from the scanner. It was trained on COVID era chest CT, so it reports how much of the lung is involved rather than naming the cause.",
+  },
+  CHEST_CT: {
+    label: "Chest CT — Lung Nodule",
+    endpoint: "/predict/volume/chest-ct",
+    bodyRegionCode: "CHEST",
+    imagingView: "Chest CT",
+    clinicSlug: "chest",
+    clinicName: "Chest Clinic",
+    clinicalNotes:
+      "Chest CT uploaded by the patient for preliminary AI analysis of a lung nodule.",
+    isVolume: true,
+    scopeNote:
+      "This model reads a volume cropped around a single lung nodule. It does not search a whole chest scan for nodules.",
+  },
+  CHEST_CT_RIBS: {
+    label: "Rib CT — Fracture Type",
+    endpoint: "/predict/volume/chest-ct-ribs",
+    bodyRegionCode: "CHEST",
+    imagingView: "Rib CT",
+    clinicSlug: "chest",
+    clinicName: "Chest Clinic",
+    clinicalNotes:
+      "Rib CT uploaded by the patient for preliminary AI analysis of a known fracture.",
+    isVolume: true,
+    scopeNote:
+      "This model sorts which kind a known rib fracture is. It cannot tell an intact rib from a broken one.",
+  },
+  HEAD_MRI: {
+    label: "Head MRI — Brain Tumour",
+    endpoint: "/predict/volume/head-mri",
+    bodyRegionCode: "HEAD",
+    imagingView: "Head MRI",
+    clinicSlug: "head",
+    clinicName: "Head & Skull Clinic",
+    clinicalNotes:
+      "Brain MRI uploaded by the patient for preliminary AI analysis of a known tumour.",
+    isVolume: true,
+    scopeNote:
+      "This model reads a post contrast brain MRI of a known tumour and answers whether the tumour enhances. It cannot tell a brain with a tumour from one without.",
+  },
+  CHEST_CT_TUMOUR: {
+    label: "Lung CT — Tumour",
+    endpoint: "/predict/volume/chest-ct-tumour",
+    bodyRegionCode: "CHEST",
+    imagingView: "Lung CT",
+    clinicSlug: "chest",
+    clinicName: "Chest Clinic",
+    clinicalNotes:
+      "Lung CT uploaded by the patient for preliminary AI analysis of a tumour.",
+    isVolume: true,
+    scopeNote:
+      "This model reads a volume cut around part of a lung and answers whether a tumour is inside it.",
+  },
+  ABDOMEN_CT_COLON: {
+    label: "Colon CT — Cancer",
+    endpoint: "/predict/volume/abdomen-ct-colon",
+    bodyRegionCode: "ABDOMEN",
+    imagingView: "Colon CT",
+    clinicSlug: "general",
+    clinicName: "General Clinic",
+    clinicalNotes:
+      "Colon CT uploaded by the patient for preliminary AI analysis of a cancer.",
+    isVolume: true,
+    scopeNote:
+      "This model reads a volume cut around part of the colon and answers whether a cancer is inside it.",
+  },
+  ABDOMEN_CT_LIVER_VESSELS: {
+    label: "Liver Vessels CT — Tumour",
+    endpoint: "/predict/volume/abdomen-ct-liver-vessels",
+    bodyRegionCode: "ABDOMEN",
+    imagingView: "Liver Vessels CT",
+    clinicSlug: "general",
+    clinicName: "General Clinic",
+    clinicalNotes:
+      "Liver vessel CT uploaded by the patient for preliminary AI analysis.",
+    isVolume: true,
+    scopeNote:
+      "This model reads a volume cut around the vessels of the liver and answers whether a tumour is inside it.",
+  },
+  ABDOMEN_CT_PANCREAS: {
+    label: "Pancreas CT — Tumour",
+    endpoint: "/predict/volume/abdomen-ct-pancreas",
+    bodyRegionCode: "ABDOMEN",
+    imagingView: "Pancreas CT",
+    clinicSlug: "general",
+    clinicName: "General Clinic",
+    clinicalNotes:
+      "Pancreas CT uploaded by the patient for preliminary AI analysis of a tumour.",
+    isVolume: true,
+    scopeNote:
+      "This model reads a volume cut around the pancreas and answers whether a tumour is inside it.",
+  },
+  ABDOMEN_CT_LIVER: {
+    label: "Liver CT — Tumour",
+    endpoint: "/predict/volume/abdomen-ct-liver",
+    bodyRegionCode: "ABDOMEN",
+    imagingView: "Liver CT",
+    clinicSlug: "general",
+    clinicName: "General Clinic",
+    clinicalNotes:
+      "Liver CT uploaded by the patient for preliminary AI analysis of a tumour.",
+    isVolume: true,
+    scopeNote:
+      "This model reads a volume cut around the liver and answers whether a tumour is inside it.",
+  },
+  ABDOMEN_CT_KIDNEY: {
+    label: "Kidney CT — Tumour",
+    endpoint: "/predict/volume/abdomen-ct-kidney",
+    bodyRegionCode: "ABDOMEN",
+    imagingView: "Kidney CT",
+    clinicSlug: "general",
+    clinicName: "General Clinic",
+    clinicalNotes:
+      "Kidney CT uploaded by the patient for preliminary AI analysis of a tumour.",
+    isVolume: true,
+    scopeNote:
+      "This model reads a volume cut around a kidney and answers whether a tumour is inside it.",
+  },
+  SPINE_CT: {
+    label: "Spine CT (no AI model - goes to a doctor)",
+    endpoint: "/predict/volume/spine-ct",
+    bodyRegionCode: "SPINE",
+    imagingView: "Spine CT",
+    clinicSlug: "spine",
+    clinicName: "Spine Clinic",
+    clinicalNotes:
+      "Spine CT uploaded by the patient for doctor review.",
+    isVolume: true,
+  },
+  PELVIS_CT: {
+    label: "Pelvis & Hip CT (no AI model - goes to a doctor)",
+    endpoint: "/predict/volume/pelvis-ct",
+    bodyRegionCode: "PELVIS_HIP",
+    imagingView: "Pelvis & Hip CT",
+    clinicSlug: "pelvis",
+    clinicName: "Pelvis & Hip Clinic",
+    clinicalNotes:
+      "Pelvis or hip CT uploaded by the patient for doctor review.",
+    isVolume: true,
+  },
+  LOWER_LIMB_CT: {
+    label: "Leg & Foot CT (no AI model - goes to a doctor)",
+    endpoint: "/predict/volume/lower-limb-ct",
+    bodyRegionCode: "LOWER_LIMB",
+    imagingView: "Lower Limb CT",
+    clinicSlug: "lower-limb",
+    clinicName: "Leg & Foot Clinic",
+    clinicalNotes:
+      "Leg, ankle, or foot CT uploaded by the patient for doctor review.",
+    isVolume: true,
+  },
+  SHOULDER_CT: {
+    label: "Shoulder CT (no AI model - goes to a doctor)",
+    endpoint: "/predict/volume/shoulder-ct",
+    bodyRegionCode: "SHOULDER",
+    imagingView: "Shoulder CT",
+    clinicSlug: "shoulder",
+    clinicName: "Shoulder Clinic",
+    clinicalNotes:
+      "Shoulder CT uploaded by the patient for doctor review.",
+    isVolume: true,
   },
 };
+
+/*
+  The two groups the upload list is split into. A patient choosing
+  between them is choosing what they were given at the imaging centre:
+  a printed film or a disc holding a scan.
+*/
+const XRAY_REGIONS: BodyRegion[] = [
+  "CHEST",
+  "SHOULDER",
+  "HAND_WRIST",
+  "SPINE",
+  "PELVIS_HIP",
+  "LOWER_LIMB",
+];
+
+/*
+  Two volumetric models the service can run are deliberately not offered
+  here: the adrenal and the brain vessel ones were trained on
+  segmentation masks rather than on scans, and a patient cannot produce
+  a segmentation. Offering them would invite an upload that comes back
+  with a confident answer about nothing. They stay reachable through the
+  service for demonstration, and say so in their own scope note.
+*/
+const VOLUME_REGIONS: BodyRegion[] = [
+  "CHEST_CT",
+  "CHEST_CT_RIBS",
+  "HEAD_MRI",
+  "CHEST_CT_TUMOUR",
+  "ABDOMEN_CT_COLON",
+  "ABDOMEN_CT_LIVER_VESSELS",
+  "ABDOMEN_CT_PANCREAS",
+  "ABDOMEN_CT_LIVER",
+  "ABDOMEN_CT_KIDNEY",
+  "SPINE_CT",
+  "PELVIS_CT",
+  "LOWER_LIMB_CT",
+  "SHOULDER_CT",
+];
 
 export default function PatientUploadPage() {
   const [bodyRegion, setBodyRegion] =
     useState<BodyRegion>("CHEST");
+  /*
+    The doctors of the clinic the chosen study type belongs to, and the
+    one the patient picked to read it. Picking is optional: a patient
+    who has no preference sends the study to the clinic, which is how
+    the application worked before doctors could be chosen.
+  */
+  const searchParams = useSearchParams();
+  const requestedDoctorId = searchParams.get("doctor");
+
+  const [doctors, setDoctors] = useState<PublicDoctor[]>([]);
+  const [doctorsLoading, setDoctorsLoading] = useState(false);
+  const [selectedDoctor, setSelectedDoctor] =
+    useState<PublicDoctor | null>(null);
   const [age, setAge] = useState("");
   const [gender, setGender] = useState("");
   const [symptoms, setSymptoms] = useState("");
@@ -189,6 +503,70 @@ export default function PatientUploadPage() {
       }
     };
   }, [previewUrl]);
+
+  /*
+    Reads the doctors of the clinic the chosen study type belongs to.
+
+    Several study types share one clinic, so the request is keyed on the
+    clinic rather than on the option: switching between a chest X-ray
+    and a chest CT is the same set of doctors and should not empty the
+    list and fetch it again.
+
+    A doctor already picked is cleared when the clinic changes. Carrying
+    a chest doctor over to a spine study would address the case to
+    somebody who does not read it, and the server would drop the choice
+    anyway.
+  */
+  useEffect(() => {
+    let active = true;
+
+    setDoctorsLoading(true);
+    setSelectedDoctor(null);
+
+    fetch(`${BACKEND_URL}/api/clinics/${regionConfig.clinicSlug}/doctors`, {
+      credentials: "include",
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (!active) return;
+
+        const listed: PublicDoctor[] = Array.isArray(data.doctors)
+          ? data.doctors
+          : [];
+
+        setDoctors(listed);
+
+        /*
+          A patient who chose from the profile page arrives back here
+          with the doctor named in the address. Matching it against the
+          list rather than trusting it means a doctor who does not work
+          in this clinic is simply not selected, which is the same
+          answer the server would give.
+        */
+        if (requestedDoctorId) {
+          const match = listed.find(
+            (doctor) => doctor.id === requestedDoctorId,
+          );
+
+          if (match) setSelectedDoctor(match);
+        }
+      })
+      .catch(() => {
+        /*
+          A clinic whose doctors cannot be listed does not block the
+          upload. The study still reaches the clinic, which is what
+          happened before any of this existed.
+        */
+        if (active) setDoctors([]);
+      })
+      .finally(() => {
+        if (active) setDoctorsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [regionConfig.clinicSlug, requestedDoctorId]);
 
   function resetImageAndResult() {
     if (previewUrl) {
@@ -220,6 +598,36 @@ export default function PatientUploadPage() {
 
     if (!file) {
       setSelectedFile(null);
+      setPreviewUrl(null);
+      return;
+    }
+
+    if (regionConfig.isVolume) {
+      if (!isVolumeFileName(file.name)) {
+        setErrorMessage(
+          "Please choose a NIfTI volume (.nii, .nii.gz), a prepared .npy volume, or a DICOM study (.dcm or a zipped series).",
+        );
+        event.target.value = "";
+        return;
+      }
+
+      if (file.size > MAX_VOLUME_FILE_SIZE) {
+        setErrorMessage(
+          "The study must be smaller than 300 MB.",
+        );
+        event.target.value = "";
+        return;
+      }
+
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+
+      /*
+        There is nothing to preview: a browser cannot draw a stack of
+        slices, so the file itself is shown instead of a picture of it.
+      */
+      setSelectedFile(file);
       setPreviewUrl(null);
       return;
     }
@@ -262,7 +670,9 @@ export default function PatientUploadPage() {
 
     if (!selectedFile) {
       setErrorMessage(
-        `Please choose a ${regionConfig.label.toLowerCase()} X-ray image first.`,
+        regionConfig.isVolume
+          ? `Please choose a ${regionConfig.label} file first.`
+          : `Please choose a ${regionConfig.label.toLowerCase()} X-ray image first.`,
       );
       return;
     }
@@ -274,7 +684,15 @@ export default function PatientUploadPage() {
 
     try {
       const aiFormData = new FormData();
-      aiFormData.append("image", selectedFile);
+
+      /*
+        The volumetric endpoints take their file under "study", the
+        X-ray ones under "image".
+      */
+      aiFormData.append(
+        regionConfig.isVolume ? "study" : "image",
+        selectedFile,
+      );
 
       /*
         A failed analysis must never lose the image. The preliminary AI
@@ -307,7 +725,8 @@ export default function PatientUploadPage() {
 
         result = {
           success: false,
-          bodyRegion,
+          bodyRegion:
+            regionConfig.bodyRegionCode ?? bodyRegion,
           detectedClinic: regionConfig.clinicSlug,
           triageResult: "NOT_ANALYZED",
           result: "NOT_ANALYZED",
@@ -343,9 +762,20 @@ export default function PatientUploadPage() {
         medicalHistory.trim(),
       );
       studyFormData.append("image", selectedFile);
+
+      /*
+        The doctor the patient picked. The server checks that this
+        doctor works in the clinic the study is going to before it
+        stores the choice, so an empty or stale value costs nothing.
+      */
+      if (selectedDoctor) {
+        studyFormData.append("doctorId", selectedDoctor.id);
+      }
       studyFormData.append(
         "bodyRegion",
-        result.bodyRegion ?? bodyRegion,
+        result.bodyRegion ??
+          regionConfig.bodyRegionCode ??
+          bodyRegion,
       );
       studyFormData.append(
         "imagingView",
@@ -364,9 +794,19 @@ export default function PatientUploadPage() {
         "clinicalNotes",
         regionConfig.clinicalNotes,
       );
+      /*
+        The clinic is decided by the body region above. This field is
+        the finer answer, which only the hand and wrist pathway has: its
+        router says whether the film shows a hand, a wrist, or a hand
+        together with the wrist, and the reviewing doctor should see
+        which of the three the reading was made on.
+      */
       studyFormData.append(
         "detectedRegion",
-        result.bodyRegion ?? bodyRegion,
+        result.detectedRegion ??
+          result.bodyRegion ??
+          regionConfig.bodyRegionCode ??
+          bodyRegion,
       );
       studyFormData.append(
         "detectedClinic",
@@ -392,6 +832,28 @@ export default function PatientUploadPage() {
         "allFindings",
         JSON.stringify(allFindings),
       );
+
+      /*
+        A model that answers normal or abnormal without naming a finding
+        sends its score instead of a finding list. Passing it on is what
+        lets the doctor's page tell that reading apart from one where
+        findings were looked for and none were found.
+      */
+      if (
+        result.abnormalityProbability !== undefined
+      ) {
+        studyFormData.append(
+          "abnormalityProbability",
+          String(result.abnormalityProbability),
+        );
+      }
+
+      if (result.decisionThreshold !== undefined) {
+        studyFormData.append(
+          "decisionThreshold",
+          String(result.decisionThreshold),
+        );
+      }
       studyFormData.append(
         "aiPriority",
         result.priority ??
@@ -511,13 +973,14 @@ export default function PatientUploadPage() {
           </p>
 
           <h1 className="mt-3 text-3xl font-black text-white md:text-4xl">
-            X-ray Analysis
+            Imaging Analysis
           </h1>
 
           <p className="mt-3 max-w-3xl leading-7 text-slate-300">
-            Chest images receive multi-label preliminary findings.
-            Shoulder images receive preliminary fracture triage. All
-            results must be reviewed by a doctor.
+            X-ray images receive preliminary findings for their body
+            region. CT and MRI volumes are read by the volumetric models
+            as a whole stack of slices. All results must be reviewed by
+            a doctor.
           </p>
         </section>
 
@@ -527,12 +990,22 @@ export default function PatientUploadPage() {
             className="rounded-3xl border border-white/20 bg-white/[0.07] p-7 shadow-[0_20px_60px_rgba(0,0,0,0.3)] backdrop-blur-2xl"
           >
             <h2 className="text-2xl font-black text-white">
-              Upload X-ray
+              {regionConfig.isVolume
+                ? "Upload CT or MRI Study"
+                : "Upload X-ray"}
             </h2>
 
+            {/*
+              The formats and the size limit differ between a film and a
+              volume, so the line says whichever applies to the option
+              in front of the patient. A fixed line naming JPG while a
+              CT is selected sends people looking for a file they will
+              never find.
+            */}
             <p className="mt-2 text-sm leading-6 text-slate-400">
-              Supported formats: JPG, PNG and WEBP. Maximum size:
-              20 MB.
+              {regionConfig.isVolume
+                ? "Supported formats: NIfTI (.nii, .nii.gz), prepared .npy volumes, and DICOM (.dcm or a zipped series). Maximum size: 300 MB."
+                : "Supported formats: JPG, PNG and WEBP. Maximum size: 20 MB."}
             </p>
 
             <div className="mt-6">
@@ -540,9 +1013,15 @@ export default function PatientUploadPage() {
                 htmlFor="body-region"
                 className="mb-2 block text-sm font-bold text-slate-200"
               >
-                Body Region
+                Study Type
               </label>
 
+              {/*
+                The two kinds of study are kept in separate groups, so a
+                patient holding a printed film and a patient holding a
+                disc from a CT scanner each find their own list rather
+                than one long mixture of the two.
+              */}
               <select
                 id="body-region"
                 value={bodyRegion}
@@ -550,19 +1029,126 @@ export default function PatientUploadPage() {
                 disabled={isAnalyzing}
                 className="w-full rounded-2xl border border-white/20 bg-[#17315a] px-4 py-3.5 text-white outline-none focus:border-cyan-300/60 disabled:opacity-50"
               >
-                {(
-                  Object.keys(REGION_CONFIG) as BodyRegion[]
-                ).map((region) => (
-                  <option key={region} value={region}>
-                    {REGION_CONFIG[region].label}
-                  </option>
-                ))}
+                <optgroup label="X-ray (single image)">
+                  {XRAY_REGIONS.map((region) => (
+                    <option key={region} value={region}>
+                      {REGION_CONFIG[region].label}
+                    </option>
+                  ))}
+                </optgroup>
+
+                <optgroup label="CT / MRI (3D volume)">
+                  {VOLUME_REGIONS.map((region) => (
+                    <option key={region} value={region}>
+                      {REGION_CONFIG[region].label}
+                    </option>
+                  ))}
+                </optgroup>
               </select>
 
               <p className="mt-2 text-xs leading-5 text-slate-400">
-                {regionConfig.label} images are reviewed in the{" "}
-                {regionConfig.clinicName}.
+                {regionConfig.isVolume
+                  ? `${regionConfig.label} studies are reviewed in the ${regionConfig.clinicName}. Upload the volume as a .nii, .nii.gz, or .npy file.`
+                  : `${regionConfig.label} images are reviewed in the ${regionConfig.clinicName}.`}
               </p>
+
+              {/*
+                These models read a cropped part of a scan rather than a
+                whole one. A patient who assumed the entire study had
+                been searched would be trusting an answer that was never
+                given, so the limit is stated before the upload, not
+                only after the result.
+              */}
+              {regionConfig.scopeNote && (
+                <p className="mt-2 rounded-2xl border border-amber-300/25 bg-amber-400/10 px-4 py-3 text-xs leading-5 text-amber-100">
+                  {regionConfig.scopeNote}
+                </p>
+              )}
+            </div>
+
+            {/*
+              The doctors of that clinic, so the patient chooses who
+              reads their study before they upload it rather than after.
+            */}
+            <div className="mt-6">
+              <div className="flex items-center justify-between gap-3">
+                <label className="block text-sm font-bold text-slate-200">
+                  Choose your doctor
+                </label>
+
+                {selectedDoctor ? (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDoctor(null)}
+                    className="rounded-lg border border-white/15 px-3 py-1 text-xs font-bold text-slate-300 transition hover:border-cyan-300/40 hover:text-cyan-200"
+                  >
+                    Change
+                  </button>
+                ) : null}
+              </div>
+
+              {doctorsLoading ? (
+                <p className="mt-3 text-sm text-slate-400">
+                  Loading the doctors of the {regionConfig.clinicName}...
+                </p>
+              ) : selectedDoctor ? (
+                <div className="mt-3 flex items-center gap-4 rounded-2xl border border-cyan-300/35 bg-cyan-400/10 p-4">
+                  {/*
+                    The same circle the card showed, drawn by the same
+                    component. Repeating the initials by hand here is
+                    what made a doctor with a photograph lose it the
+                    moment they were chosen.
+                  */}
+                  <Avatar
+                    initials={selectedDoctor.initials}
+                    name={selectedDoctor.name}
+                    photoUrl={selectedDoctor.photoUrl}
+                    size="h-12 w-12 text-base"
+                  />
+
+                  <div className="min-w-0">
+                    <p className="font-black text-white">
+                      {selectedDoctor.name}
+                    </p>
+                    <p className="text-xs font-bold text-cyan-200">
+                      {selectedDoctor.subspecialty ||
+                        selectedDoctor.specialty}
+                      {" · "}
+                      {selectedDoctor.yearsOfExperience} years exp
+                    </p>
+                  </div>
+                </div>
+              ) : doctors.length === 0 ? (
+                /*
+                  A clinic with nobody assigned to it yet. The upload is
+                  not blocked: the study is saved and waits for whoever
+                  the administration puts in that clinic.
+                */
+                <p className="mt-3 rounded-2xl border border-white/15 bg-white/[0.05] px-4 py-3 text-sm leading-6 text-slate-300">
+                  No doctor is listed in the {regionConfig.clinicName}{" "}
+                  yet. Your study will be saved and read by the clinic.
+                </p>
+              ) : (
+                <>
+                  <p className="mt-1 text-xs leading-5 text-slate-400">
+                    {doctors.length} doctor
+                    {doctors.length === 1 ? "" : "s"} in the{" "}
+                    {regionConfig.clinicName}. Pick one, or leave this
+                    and the clinic will assign your study.
+                  </p>
+
+                  <div className="mt-4 grid gap-4">
+                    {doctors.map((doctor) => (
+                      <DoctorCard
+                        key={doctor.id}
+                        doctor={doctor}
+                        clinicKey={regionConfig.clinicSlug}
+                        onChoose={() => setSelectedDoctor(doctor)}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -663,14 +1249,38 @@ export default function PatientUploadPage() {
                   alt={`Selected ${regionConfig.label.toLowerCase()} X-ray preview`}
                   className="max-h-72 w-full rounded-2xl object-contain"
                 />
-              ) : (
+              ) : regionConfig.isVolume &&
+                selectedFile ? (
+                /*
+                  A stack of slices cannot be drawn by a browser, so the
+                  chosen file is confirmed by name and size instead of
+                  by a picture. Showing nothing here would leave the
+                  patient unsure the upload had taken.
+                */
                 <>
-                  <span className="text-6xl">🩻</span>
+                  <span className="text-6xl">🧊</span>
                   <p className="mt-5 text-lg font-black text-white">
-                    Choose a {regionConfig.label.toLowerCase()} X-ray
+                    {selectedFile.name}
                   </p>
                   <p className="mt-2 text-sm text-slate-400">
-                    Click here to browse your files
+                    Volume selected — no preview is possible for a CT or
+                    MRI stack
+                  </p>
+                </>
+              ) : (
+                <>
+                  <span className="text-6xl">
+                    {regionConfig.isVolume ? "🧊" : "🩻"}
+                  </span>
+                  <p className="mt-5 text-lg font-black text-white">
+                    {regionConfig.isVolume
+                      ? `Choose a ${regionConfig.label} volume`
+                      : `Choose a ${regionConfig.label.toLowerCase()} X-ray`}
+                  </p>
+                  <p className="mt-2 text-sm text-slate-400">
+                    {regionConfig.isVolume
+                      ? "Click here to browse for a .nii.gz, .npy, or DICOM file"
+                      : "Click here to browse your files"}
                   </p>
                 </>
               )}
@@ -679,7 +1289,11 @@ export default function PatientUploadPage() {
                 key={bodyRegion}
                 type="file"
                 name="image"
-                accept="image/jpeg,image/png,image/webp"
+                accept={
+                  regionConfig.isVolume
+                    ? ".nii,.nii.gz,.npy,.dcm,.zip"
+                    : "image/jpeg,image/png,image/webp"
+                }
                 onChange={handleFileChange}
                 className="hidden"
               />
@@ -716,7 +1330,9 @@ export default function PatientUploadPage() {
               >
                 {isAnalyzing
                   ? "Analyzing..."
-                  : `Analyze ${regionConfig.label} X-ray`}
+                  : regionConfig.isVolume
+                    ? `Analyze ${regionConfig.label}`
+                    : `Analyze ${regionConfig.label} X-ray`}
               </button>
 
               <button
@@ -742,8 +1358,9 @@ export default function PatientUploadPage() {
                   No analysis yet
                 </p>
                 <p className="mt-2 max-w-sm text-sm leading-6 text-slate-400">
-                  Choose a matching X-ray image and press Analyze to
-                  view the preliminary result.
+                  {regionConfig.isVolume
+                    ? "Choose a matching CT or MRI volume and press Analyze to view the preliminary result."
+                    : "Choose a matching X-ray image and press Analyze to view the preliminary result."}
                 </p>
               </div>
             )}
@@ -752,11 +1369,16 @@ export default function PatientUploadPage() {
               <div className="mt-6 flex min-h-96 flex-col items-center justify-center rounded-3xl border border-cyan-300/20 bg-cyan-400/[0.06] p-8 text-center">
                 <div className="h-14 w-14 animate-spin rounded-full border-4 border-cyan-300/20 border-t-cyan-300" />
                 <p className="mt-6 text-lg font-black text-white">
-                  Analyzing the image
+                  {regionConfig.isVolume
+                    ? "Analyzing the volume"
+                    : "Analyzing the image"}
                 </p>
                 <p className="mt-2 text-sm text-slate-400">
                   Please wait while the AI model processes the{" "}
-                  {regionConfig.label.toLowerCase()} X-ray.
+                  {regionConfig.isVolume
+                    ? regionConfig.label
+                    : `${regionConfig.label.toLowerCase()} X-ray`}
+                  .
                 </p>
               </div>
             )}
@@ -855,6 +1477,22 @@ function MultiLabelFindingsResult({
   const detectedFindings = result.possibleFindings ?? [];
   const allFindings = result.allFindings ?? [];
 
+  /*
+    A triage-only model names no findings, so the findings section below
+    would tell the patient that "no supported finding exceeded its
+    threshold" about a model that has no findings to exceed one. Its
+    score against the cut point is the honest thing to show instead.
+  */
+  if (
+    allFindings.length === 0 &&
+    detectedFindings.length === 0 &&
+    result.abnormalityProbability !== undefined
+  ) {
+    return (
+      <TriageScoreResult result={result} />
+    );
+  }
+
   return (
     <>
       <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.05] p-4">
@@ -906,6 +1544,71 @@ function MultiLabelFindingsResult({
         </div>
       )}
     </>
+  );
+}
+
+/*
+  Renders the result of a model that answers normal or abnormal without
+  naming a finding.
+
+  The hand model is the one that does this today. It was trained on 604
+  hand radiographs labelled only as normal or abnormal, so it can say
+  whether a hand looks injured but not which injury it is. Showing the
+  score beside the cut point lets a patient see how near the decision
+  was, which matters most for the readings that come back uncertain.
+*/
+function TriageScoreResult({
+  result,
+}: {
+  result: AnalysisResult;
+}) {
+  const score = result.abnormalityProbability ?? 0;
+  const threshold = result.decisionThreshold ?? 50;
+
+  return (
+    <div className="mt-6 space-y-4">
+      <div className="rounded-2xl border border-white/10 bg-white/[0.05] p-4">
+        <div className="flex items-baseline justify-between gap-3">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Abnormality score
+          </p>
+          <p className="text-xs text-slate-400">
+            decides at {threshold.toFixed(1)}%
+          </p>
+        </div>
+
+        <p className="mt-2 text-3xl font-black text-white">
+          {score.toFixed(1)}%
+        </p>
+
+        {/* The bar carries the same two numbers as the text above it,
+            so the distance between them is visible at a glance. */}
+        <div className="relative mt-4 h-2 w-full rounded-full bg-white/10">
+          <div
+            className={`h-2 rounded-full ${
+              score >= threshold ? "bg-amber-400" : "bg-emerald-400"
+            }`}
+            style={{ width: `${Math.min(100, Math.max(0, score))}%` }}
+          />
+          <div
+            className="absolute top-[-4px] h-4 w-0.5 bg-white/70"
+            style={{ left: `${Math.min(100, Math.max(0, threshold))}%` }}
+          />
+        </div>
+
+        <p className="mt-3 text-sm leading-6 text-slate-300">
+          {score >= threshold
+            ? "The score is above the cut point, so this study was read as abnormal."
+            : "The score is below the cut point, so this study was read as normal."}
+        </p>
+      </div>
+
+      <div className="rounded-2xl border border-white/10 bg-black/10 p-4 text-sm leading-6 text-slate-300">
+        This model reports whether the study looks normal or abnormal. It
+        does not name a specific finding, so there is no finding list for
+        this reading.
+      </div>
+    </div>
   );
 }
 

@@ -27,6 +27,8 @@ type StudyRow = {
   medicalHistory: string;
   originalFileName: string;
   fileType: string | null;
+  /* "IMAGE" for a single film, "VOLUME" for a CT or MRI stack. */
+  studyKind: string;
   fileSize: number | null;
   status: string;
   clinicKey: string;
@@ -96,12 +98,15 @@ export async function GET(
 
     const [rows] = await sql.execute(
       `SELECT s.id, s.patient_id AS patientId, p.name AS patientName,
-       p.age, p.gender, COALESCE(p.phone,'') AS phone, COALESCE(p.email,'') AS email,
+       COALESCE(s.patient_age, p.age) AS age,
+       COALESCE(s.patient_gender, p.gender) AS gender,
+       COALESCE(p.phone,'') AS phone, COALESCE(p.email,'') AS email,
        s.body_region AS bodyRegion, s.imaging_view AS imagingView, s.priority,
        COALESCE(s.clinical_notes,'') AS clinicalNotes,
        COALESCE(s.symptoms, p.symptoms, '') AS symptoms,
        COALESCE(s.medical_history, p.medical_history, '') AS medicalHistory,
        s.original_file_name AS originalFileName, s.file_type AS fileType,
+       s.study_kind AS studyKind,
        s.file_size AS fileSize, s.status, s.clinic_key AS clinicKey, s.created_at AS createdAt,
        s.updated_at AS updatedAt,
        COALESCE(a.predicted_finding,'Not analyzed yet') AS aiResult,
