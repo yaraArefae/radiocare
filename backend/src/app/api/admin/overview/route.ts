@@ -78,9 +78,18 @@ export async function GET(request: Request) {
       `SELECT
          (SELECT COUNT(*) FROM patient_application WHERE status = 'Pending') AS pendingPatients,
          (SELECT COUNT(*) FROM doctor_application WHERE status = 'Pending') AS pendingDoctors,
+         (SELECT COUNT(*) FROM secretary_application WHERE status = 'Pending') AS pendingSecretaries,
          (SELECT COUNT(*) FROM report WHERE status = 'Approved') AS approvedReports,
          (SELECT COUNT(*) FROM report WHERE status = 'Draft') AS draftReports,
-         (SELECT COUNT(*) FROM appointment WHERE status = 'Pending') AS pendingAppointments`,
+         (SELECT COUNT(*) FROM appointment WHERE status = 'Pending') AS pendingAppointments,
+         /*
+           A booked appointment is one that is still going to happen:
+           invited or accepted, and not yet in the past. A cancelled or
+           finished one is history rather than a booking.
+         */
+         (SELECT COUNT(*) FROM appointment
+          WHERE status IN ('Pending', 'Confirmed')
+            AND scheduled_at >= CURRENT_TIMESTAMP(3)) AS bookedAppointments`,
     );
 
     const [loginRows] = await sql.execute(
@@ -105,6 +114,17 @@ export async function GET(request: Request) {
        FROM admin_audit
        ORDER BY created_at DESC
        LIMIT 50`,
+    );
+
+    /*
+      Messages from doctors and patients that no administrator has read
+      yet. They belong in the queue counters because they are work
+      waiting on the administration exactly like a pending request is.
+    */
+    const [supportRows] = await sql.execute(
+      `SELECT COUNT(*) AS unreadSupport
+       FROM support_message
+       WHERE sender_role <> 'admin' AND is_read = FALSE`,
     );
 
     const toNumber = (value: unknown) => Number(value ?? 0);
@@ -137,6 +157,9 @@ export async function GET(request: Request) {
           (requestRows as any[])[0]?.pendingPatients,
         ),
         pendingDoctors: toNumber((requestRows as any[])[0]?.pendingDoctors),
+        pendingSecretaries: toNumber(
+          (requestRows as any[])[0]?.pendingSecretaries,
+        ),
         approvedReports: toNumber(
           (requestRows as any[])[0]?.approvedReports,
         ),
@@ -144,6 +167,10 @@ export async function GET(request: Request) {
         pendingAppointments: toNumber(
           (requestRows as any[])[0]?.pendingAppointments,
         ),
+        bookedAppointments: toNumber(
+          (requestRows as any[])[0]?.bookedAppointments,
+        ),
+        unreadSupport: toNumber((supportRows as any[])[0]?.unreadSupport),
       },
       audit: auditRows as any[],
       security: {

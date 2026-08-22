@@ -81,6 +81,44 @@ export async function GET(request: Request, context: RouteContext) {
       );
     }
 
+    /*
+      The application this doctor was approved from, so the credential
+      documents stay reachable after approval and not only while the
+      request is still pending.
+    */
+    const [applicationRows] = await sql.execute(
+      `SELECT id, id_document_path AS idDocument,
+         medical_license_path AS medicalLicense,
+         specialty_certificate_path AS specialtyCertificate,
+         cv_path AS cv
+       FROM doctor_application
+       WHERE approved_user_id = ?
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [doctorId],
+    );
+
+    const application = (applicationRows as any[])[0];
+
+    const documents = application
+      ? [
+          ["id-document", "ID document", application.idDocument],
+          ["medical-license", "Medical license", application.medicalLicense],
+          [
+            "specialty-certificate",
+            "Specialty certificate",
+            application.specialtyCertificate,
+          ],
+          ["cv", "CV", application.cv],
+        ].map(([kind, label, storedPath]) => ({
+          kind,
+          label,
+          /* Only a stored path means the file itself reached the server. */
+          available: String(storedPath ?? "").startsWith("storage/"),
+          givenName: String(storedPath ?? ""),
+        }))
+      : [];
+
     const clinics = doctorClinics(profile);
     const scope = clinicScope("s.clinic_key", clinics);
 
@@ -174,6 +212,8 @@ export async function GET(request: Request, context: RouteContext) {
           caseCount: cases.filter((row) => row.clinicKey === key).length,
         };
       }),
+      applicationId: application?.id ?? null,
+      documents,
       cases,
       waitingCases: waiting,
       reports: reportRows,

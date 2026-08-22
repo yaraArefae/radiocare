@@ -402,8 +402,11 @@ export default function AdminUsersPage() {
       <div className="pointer-events-none fixed -right-40 bottom-0 h-[540px] w-[540px] rounded-full bg-cyan-400/20 blur-[170px]" />
 
       <header className="sticky top-0 z-40 border-b border-white/15 bg-blue-950/45 shadow-[0_10px_35px_rgba(0,0,0,0.18)] backdrop-blur-2xl">
-        <div className="mx-auto flex max-w-[1700px] items-center justify-between px-5 py-4 sm:px-7">
-        <AdminNav />
+        {/*
+          The logo opens the bar and the menu follows it; the way back
+          sits at the far end, where a leave action is expected.
+        */}
+        <div className="mx-auto flex max-w-[1700px] flex-wrap items-center gap-3 px-5 py-4 sm:px-7">
           <button
             type="button"
             onClick={() => router.push("/dashboard")}
@@ -421,10 +424,14 @@ export default function AdminUsersPage() {
             </div>
           </button>
 
+          <div className="min-w-0 flex-1">
+            <AdminNav compact />
+          </div>
+
           <button
             type="button"
             onClick={() => router.push("/dashboard")}
-            className="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white shadow-sm backdrop-blur-xl transition hover:bg-white/15"
+            className="ml-auto rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white shadow-sm backdrop-blur-xl transition hover:bg-white/15"
           >
             Back to dashboard
           </button>
@@ -711,6 +718,17 @@ type ManagedAccount = {
 */
 function AccountManagement() {
   const [accounts, setAccounts] = useState<ManagedAccount[]>([]);
+
+  /*
+    The account list is folded away by default. It grows with every
+    patient and doctor, and the numbers an administrator reads at a
+    glance stay on the closed header, so nothing is hidden silently.
+  */
+  const [isAccountsOpen, setIsAccountsOpen] = useState(false);
+
+  const suspendedCount = accounts.filter(
+    (account) => account.banned,
+  ).length;
   const [isLoading, setIsLoading] = useState(true);
   const [busyId, setBusyId] = useState("");
   const [message, setMessage] = useState("");
@@ -797,19 +815,45 @@ function AccountManagement() {
     <section className="mx-auto mt-8 w-full max-w-7xl px-6 pb-10">
       <div className="rounded-3xl border border-white/20 bg-white/[0.08] p-7 backdrop-blur-2xl">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-bold uppercase tracking-[0.22em] text-cyan-300">
-              Existing accounts
-            </p>
+          <button
+            type="button"
+            onClick={() => setIsAccountsOpen((open) => !open)}
+            aria-expanded={isAccountsOpen}
+            className="flex flex-1 items-center gap-4 text-left"
+          >
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-lg font-black text-cyan-100">
+              {isAccountsOpen ? "−" : "+"}
+            </span>
 
-            <h2 className="mt-2 text-2xl font-black text-white">
-              Manage Accounts
-            </h2>
+            <span>
+              <span className="block text-sm font-bold uppercase tracking-[0.22em] text-cyan-300">
+                Existing accounts
+              </span>
 
-            <p className="mt-2 text-slate-300">
-              Change a role, suspend an account, or issue a new password.
-            </p>
-          </div>
+              <span className="mt-2 flex flex-wrap items-center gap-3">
+                <h2 className="text-2xl font-black text-white">
+                  Manage Accounts
+                </h2>
+
+                {accounts.length > 0 && (
+                  <span className="rounded-full border border-cyan-300/20 bg-cyan-300/15 px-3 py-1 text-xs font-bold text-cyan-100">
+                    {accounts.length} account
+                    {accounts.length === 1 ? "" : "s"}
+                  </span>
+                )}
+
+                {suspendedCount > 0 && (
+                  <span className="rounded-full border border-rose-300/30 bg-rose-500/15 px-3 py-1 text-xs font-bold text-rose-100">
+                    {suspendedCount} suspended
+                  </span>
+                )}
+              </span>
+
+              <span className="mt-2 block text-slate-300">
+                Change a role, suspend an account, or issue a new password.
+              </span>
+            </span>
+          </button>
 
           <button
             type="button"
@@ -833,6 +877,7 @@ function AccountManagement() {
           </p>
         )}
 
+        {isAccountsOpen && (
         <div className="mt-6 flex flex-col gap-3">
           {isLoading ? (
             <p className="rounded-2xl border border-white/15 bg-white/[0.05] p-6 text-center text-slate-300">
@@ -994,6 +1039,7 @@ function AccountManagement() {
             ))
           )}
         </div>
+        )}
       </div>
     </section>
   );

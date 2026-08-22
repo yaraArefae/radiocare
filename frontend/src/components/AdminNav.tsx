@@ -29,12 +29,31 @@ const adminLinks = [
     icon: "🩺",
     counter: "pendingDoctors" as const,
   },
+  {
+    href: "/admin/messages",
+    label: "Messages",
+    icon: "💬",
+    counter: "unreadSupport" as const,
+  },
+  { href: "/admin/appointments", label: "Appointments", icon: "📅" },
   { href: "/admin/users", label: "Accounts", icon: "👥" },
   { href: "/admin/patients", label: "Patients", icon: "🧾" },
   { href: "/admin/clinics", label: "Clinics", icon: "🏥" },
+  {
+    href: "/admin/secretary-requests",
+    label: "Secretary requests",
+    icon: "📇",
+    counter: "pendingSecretaries" as const,
+  },
+  { href: "/admin/secretaries", label: "Secretaries", icon: "🗓️" },
 ];
 
-export default function AdminNav() {
+/*
+  The spacing below the menu belongs to the pages that stack it above
+  their content. Inside a header bar it pushes the row off centre, so
+  those pass compact and lay it out themselves.
+*/
+export default function AdminNav({ compact = false }: { compact?: boolean }) {
   const pathname = usePathname();
   const [counters, setCounters] = useState<Record<string, number>>({});
 
@@ -66,8 +85,27 @@ export default function AdminNav() {
   }, [loadCounters]);
 
   return (
-    <nav className="mb-6 flex flex-wrap items-center gap-2">
+    <nav
+      className={[
+        "flex flex-wrap items-center gap-2",
+        compact ? "" : "mb-6",
+      ].join(" ")}
+    >
       <NotificationBell />
+
+      {/*
+        The way back to the main dashboard. Every admin screen carries
+        this navigation, so putting it here means no screen is a dead
+        end, whichever one an administrator landed on from a
+        notification.
+      */}
+      <Link
+        href="/dashboard"
+        className="inline-flex items-center gap-2 rounded-2xl border border-cyan-300/30 bg-cyan-400/15 px-4 py-2.5 text-sm font-bold text-cyan-100 transition hover:border-cyan-300/60 hover:bg-cyan-400/25"
+      >
+        <span aria-hidden="true">←</span>
+        Dashboard
+      </Link>
 
       {adminLinks.map((link) => {
         const isActive = pathname === link.href;

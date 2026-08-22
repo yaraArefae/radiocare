@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import AdminNav from "@/components/AdminNav";
+import SupportInboxCard from "@/components/SupportInboxCard";
 import { authClient } from "@/client/auth/auth-client";
 
 const backendBaseUrl = (
@@ -42,6 +43,7 @@ type Overview = {
   queue: {
     pendingPatients: number;
     pendingDoctors: number;
+    pendingSecretaries: number;
     approvedReports: number;
     draftReports: number;
     pendingAppointments: number;
@@ -65,6 +67,13 @@ export default function AdminOverviewPage() {
   }, [session]);
 
   const [overview, setOverview] = useState<Overview | null>(null);
+
+  /*
+    The sign-in log is folded away by default. It is a long table of
+    routine successes; the number that matters, the failed attempts in
+    the last day, stays on the closed header in red.
+  */
+  const [isActivityOpen, setIsActivityOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -154,6 +163,16 @@ export default function AdminOverviewPage() {
             >
               🩺 Doctor Requests
               {queue?.pendingDoctors ? ` (${queue.pendingDoctors})` : ""}
+            </Link>
+
+            <Link
+              href="/admin/secretary-requests"
+              className="rounded-2xl border border-cyan-300/30 bg-cyan-400/15 px-5 py-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/25"
+            >
+              📇 Secretary Requests
+              {queue?.pendingSecretaries
+                ? ` (${queue.pendingSecretaries})`
+                : ""}
             </Link>
 
             <Link
@@ -255,6 +274,16 @@ export default function AdminOverviewPage() {
           ))}
         </section>
 
+        {/*
+          What doctors and patients have written to the administration.
+          It sits with the counters rather than only in the navigation,
+          because an unanswered message is a queue like any other on
+          this page.
+        */}
+        <div className="mt-6">
+          <SupportInboxCard viewerRole="admin" />
+        </div>
+
         <div className="mt-6 grid gap-6 lg:grid-cols-2">
           <section className="rounded-3xl border border-white/15 bg-white/[0.07] p-6 backdrop-blur-2xl">
             <h2 className="text-xl font-black text-white">
@@ -277,6 +306,10 @@ export default function AdminOverviewPage() {
                 {
                   label: "Pending doctor requests",
                   value: queue?.pendingDoctors,
+                },
+                {
+                  label: "Pending secretary applications",
+                  value: queue?.pendingSecretaries,
                 },
                 {
                   label: "Draft reports",
@@ -346,9 +379,28 @@ export default function AdminOverviewPage() {
 
         <section className="mt-6 rounded-3xl border border-white/15 bg-white/[0.07] p-6 backdrop-blur-2xl">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-xl font-black text-white">
-              Sign-in activity
-            </h2>
+            <button
+              type="button"
+              onClick={() => setIsActivityOpen((open) => !open)}
+              aria-expanded={isActivityOpen}
+              className="flex flex-1 items-center gap-4 text-left"
+            >
+              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-white/20 bg-white/10 text-lg font-black text-cyan-100">
+                {isActivityOpen ? "−" : "+"}
+              </span>
+
+              <span className="flex flex-wrap items-center gap-3">
+                <h2 className="text-xl font-black text-white">
+                  Sign-in activity
+                </h2>
+
+                {(overview?.security.attempts ?? []).length > 0 && (
+                  <span className="rounded-full border border-cyan-300/20 bg-cyan-300/15 px-3 py-1 text-xs font-bold text-cyan-100">
+                    {overview?.security.attempts.length} attempts
+                  </span>
+                )}
+              </span>
+            </button>
 
             {overview?.security.failedLastDay ? (
               <span className="rounded-full border border-rose-300/30 bg-rose-500/15 px-3 py-1.5 text-xs font-black text-rose-100">
@@ -357,6 +409,7 @@ export default function AdminOverviewPage() {
             ) : null}
           </div>
 
+          {isActivityOpen && (
           <div className="mt-4 overflow-x-auto">
             <table className="w-full min-w-[40rem] text-left text-sm">
               <thead className="text-xs uppercase tracking-wider text-slate-400">
@@ -416,6 +469,7 @@ export default function AdminOverviewPage() {
               </tbody>
             </table>
           </div>
+          )}
         </section>
       </div>
     </main>

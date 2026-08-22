@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import AdminQuickBar from "@/components/AdminQuickBar";
 import { authClient } from "@/client/auth/auth-client";
 
 const backendBaseUrl = (
@@ -31,6 +32,16 @@ type Study = {
   confidence: number | string | null;
 };
 
+type AdminDoctor = {
+  doctorId: string;
+  fullName: string;
+  email: string;
+  specialty: string;
+  status: string;
+  suspended: boolean;
+  clinics: string[];
+};
+
 type DashboardUser = {
   name: string;
   email: string;
@@ -49,10 +60,9 @@ const CLINIC_NAMES: Record<string, string> = {
   chest: "Chest Clinic",
   shoulder: "Shoulder Clinic",
   "hand-wrist": "Hand & Wrist Clinic",
-  head: "Head & Skull Clinic",
   spine: "Spine Clinic",
   pelvis: "Pelvis & Hip Clinic",
-  "lower-limb": "Leg, Knee & Foot Clinic",
+  "lower-limb": "Leg & Foot Clinic",
   general: "Unclassified",
 };
 
@@ -119,6 +129,14 @@ export default function DashboardPage() {
   const [isStudiesOpen, setIsStudiesOpen] = useState(false);
 
   /*
+    The doctors, shown the same way the clinics are: one card each, with
+    the work sitting in the clinics they cover. The counts are worked out
+    from the studies already loaded, so this costs one request and no
+    extra query.
+  */
+  const [doctors, setDoctors] = useState<AdminDoctor[]>([]);
+
+  /*
     The studies come from the API, which already limits them to what the
     signed in user may see. An administrator gets every clinic, a doctor
     only the clinics they work in.
@@ -151,6 +169,44 @@ export default function DashboardPage() {
 
     void loadStudies();
   }, [loadStudies, session]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    const role = (session.user as DashboardUser).role;
+
+    const isAdminUser = (
+      Array.isArray(role) ? role : String(role ?? "").split(",")
+    )
+      .map((value) => value.trim().toLowerCase())
+      .includes("admin");
+
+    if (!isAdminUser) return;
+
+    let active = true;
+
+    void (async () => {
+      try {
+        const response = await fetch(`${backendBaseUrl}/api/admin/doctors`, {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+        });
+
+        const data = await response.json();
+
+        if (active && response.ok && data.success) {
+          setDoctors(data.doctors ?? []);
+        }
+      } catch (error) {
+        console.error("Unable to load the doctors:", error);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [session]);
 
   const waitingStudies = useMemo(
     () => studies.filter(needsReview),
@@ -212,6 +268,24 @@ export default function DashboardPage() {
       }));
   }, [studies, waitingStudies]);
 
+  const doctorGroups = useMemo(
+    () =>
+      doctors.map((doctor) => {
+        const covers = (study: Study) =>
+          doctor.clinics.includes(study.clinicKey || "general");
+
+        return {
+          ...doctor,
+          clinicNames: doctor.clinics
+            .map((key) => CLINIC_NAMES[key] ?? key)
+            .join(" · "),
+          total: studies.filter(covers).length,
+          waiting: waitingStudies.filter(covers).length,
+        };
+      }),
+    [doctors, studies, waitingStudies],
+  );
+
   useEffect(() => {
     if (!isPending && !session) {
       router.replace("/");
@@ -238,6 +312,16 @@ export default function DashboardPage() {
       */
       if (userRoles.includes("doctor")) {
         void router.replace("/doctor/clinic");
+        return;
+      }
+
+      /*
+        A secretary has one page and nothing else: the calendar of the
+        doctor they work for. Landing them on the administration screen
+        would show a menu where every entry refuses them.
+      */
+      if (userRoles.includes("secretary")) {
+        void router.replace("/secretary");
         return;
       }
 
@@ -471,7 +555,15 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            {/*
+              Notifications, the administration inbox and what is booked,
+              in the header of every dashboard visit. An administrator
+              lands here first, so these three have to be answerable from
+              here rather than found on another screen.
+            */}
+            {isAdmin && <AdminQuickBar />}
+
             <div className="hidden text-right sm:block">
               <p className="font-semibold text-white">
                 {currentUser.name}
@@ -657,6 +749,26 @@ export default function DashboardPage() {
                   Add Doctor Request
                 </button>
 
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push("/admin/secretary-requests")
+                  }
+                  className="w-full rounded-xl border border-transparent px-4 py-3 text-left font-medium text-slate-200 transition hover:border-white/15 hover:bg-white/10"
+                >
+                  Secretary Requests
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    router.push("/admin/secretaries")
+                  }
+                  className="w-full rounded-xl border border-transparent px-4 py-3 text-left font-medium text-slate-200 transition hover:border-white/15 hover:bg-white/10"
+                >
+                  Secretaries
+                </button>
+
               </>
             )}
           </nav>
@@ -729,6 +841,9 @@ export default function DashboardPage() {
                 </div>
 
                 <div className={actionRow}>
+                  {/* The administrative overview is reached from the
+                      side menu and from the admin navigation, so it does
+                      not belong among the actions of the patient queue. */}
                   <button
                     type="button"
                     onClick={() =>
@@ -737,14 +852,6 @@ export default function DashboardPage() {
                     className={primaryAction}
                   >
                     Open Patient Requests
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => router.push("/admin/overview")}
-                    className={secondaryAction}
-                  >
-                    Admin Overview
                   </button>
                 </div>
               </div>
@@ -776,6 +883,8 @@ export default function DashboardPage() {
           )}
 
           {isAdmin && <AdminDoctorManagement />}
+
+          {isAdmin && <AdminSecretaryManagement />}
 
           {/* Statistics */}
           <div className="mt-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
@@ -839,6 +948,57 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
+
+          {/* Doctors, laid out like the clinics above */}
+          {isAdmin && doctorGroups.length > 0 && (
+            <div className="mt-9">
+              <h3 className="text-xl font-bold text-white">Doctors</h3>
+
+              <p className="mt-1 text-sm text-slate-300">
+                Each doctor and the work waiting in the clinics they cover.
+                Open one to see their cases, reports and documents.
+              </p>
+
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                {doctorGroups.map((doctor) => (
+                  <button
+                    key={doctor.doctorId}
+                    type="button"
+                    onClick={() =>
+                      router.push(`/admin/doctors/${doctor.doctorId}`)
+                    }
+                    className="rounded-2xl border border-white/15 bg-white/10 p-5 text-left shadow-[0_18px_50px_rgba(0,0,0,0.20)] backdrop-blur-xl transition hover:border-cyan-300/30 hover:bg-white/15"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <h4 className="truncate font-bold text-white">
+                          {doctor.fullName}
+                        </h4>
+
+                        <p className="mt-1 truncate text-sm leading-5 text-slate-300">
+                          {doctor.clinicNames}
+                        </p>
+
+                        <p className="mt-1 text-sm leading-5 text-slate-300">
+                          {doctor.waiting} waiting for review
+                        </p>
+
+                        {doctor.suspended && (
+                          <span className="mt-2 inline-flex rounded-full border border-rose-300/30 bg-rose-500/15 px-2.5 py-0.5 text-[11px] font-bold text-rose-100">
+                            Suspended
+                          </span>
+                        )}
+                      </div>
+
+                      <span className="shrink-0 rounded-full border border-cyan-300/20 bg-cyan-300/15 px-3 py-1 text-sm font-bold text-cyan-100">
+                        {doctor.total}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Studies table */}
           <div className="mt-9 rounded-2xl border border-white/15 bg-white/10 p-6 shadow-[0_25px_70px_rgba(0,0,0,0.24)] backdrop-blur-2xl">
@@ -1023,6 +1183,99 @@ type DoctorRequestSummary = {
     | "Rejected"
     | "Suspended";
 };
+
+/*
+  Employing a secretary for a doctor.
+
+  It sits under doctor management because it is the same kind of
+  decision: who works here, and for whom. A secretary manages one
+  doctor's calendar and cannot open a study or a report, which the card
+  says out loud so nobody has to guess at the reach of the account they
+  are creating.
+*/
+function AdminSecretaryManagement() {
+  const router = useRouter();
+
+  const [counts, setCounts] = useState({
+    employed: 0,
+    doctorsWithout: 0,
+  });
+
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${backendBaseUrl}/api/admin/secretaries`, {
+      credentials: "include",
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        if (!data.success) return;
+
+        const doctors = Array.isArray(data.doctors) ? data.doctors : [];
+
+        setCounts({
+          employed: Array.isArray(data.secretaries)
+            ? data.secretaries.length
+            : 0,
+          doctorsWithout: doctors.filter(
+            (doctor: { hasSecretary: boolean }) => !doctor.hasSecretary,
+          ).length,
+        });
+      })
+      .catch(() => {
+        /* The card degrades to zeros rather than an error banner. */
+      })
+      .finally(() => setIsLoading(false));
+  }, []);
+
+  return (
+    <section className="mt-8 rounded-[28px] border border-cyan-300/20 bg-gradient-to-r from-blue-500/15 to-cyan-400/10 p-6 shadow-[0_24px_70px_rgba(0,0,0,0.22)] backdrop-blur-2xl">
+      <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-center">
+        <div>
+          <p className="text-sm font-semibold text-cyan-300">
+            Secretary Management
+          </p>
+
+          <h3 className="mt-2 text-2xl font-bold text-white">
+            Employ a secretary for a doctor
+          </h3>
+
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-200">
+            A secretary books, moves and cancels appointments in one
+            doctor&apos;s calendar. They cannot open a study, an AI
+            result or a report.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => router.push("/admin/secretaries")}
+          className="h-fit rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-3 font-bold text-white transition hover:from-cyan-400 hover:to-blue-500"
+        >
+          Manage Secretaries
+        </button>
+      </div>
+
+      <div className="mt-6 grid gap-4 sm:grid-cols-2">
+        <div className="rounded-2xl border border-white/15 bg-white/10 p-4">
+          <p className="text-sm text-slate-300">Employed</p>
+          <p className="mt-2 text-3xl font-bold text-white">
+            {isLoading ? "..." : counts.employed}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-amber-300/20 bg-amber-300/10 p-4">
+          <p className="text-sm text-amber-100">
+            Doctors without one
+          </p>
+          <p className="mt-2 text-3xl font-bold text-white">
+            {isLoading ? "..." : counts.doctorsWithout}
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
 
 function AdminDoctorManagement() {
   const router = useRouter();

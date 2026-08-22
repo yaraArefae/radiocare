@@ -7,7 +7,7 @@ import { type FormEvent, useMemo, useState, useEffect } from "react";
 
 import { authClient } from "@/client/auth/auth-client";
 
-type UiRole = "admin" | "doctor" | "patient";
+type UiRole = "admin" | "doctor" | "patient" | "secretary";
 
 type SessionUser = {
   role?: string | string[] | null;
@@ -45,6 +45,17 @@ const roleOptions: RoleOption[] = [
     emailPlaceholder: "Enter your registered work email",
     disclaimer:
       "AI findings support clinical review and do not replace the physician's final diagnosis.",
+  },
+  {
+    value: "secretary",
+    label: "Secretary",
+    shortLabel: "Secretary",
+    description:
+      "Book, move and cancel appointments in your doctor's calendar.",
+    emailLabel: "Work email",
+    emailPlaceholder: "Enter the email your doctor's clinic gave you",
+    disclaimer:
+      "A secretary manages appointments only. Studies, AI results and reports are not part of this access.",
   },
   {
     value: "admin",
@@ -162,6 +173,8 @@ export default function Home() {
       const roleRoutes: Record<UiRole, string> = {
         patient: "/patients/dashboard",
         doctor: "/doctor/clinic",
+        /* A secretary has one page: their doctor's calendar. */
+        secretary: "/secretary",
         admin: "/dashboard",
       };
 
@@ -402,6 +415,33 @@ export default function Home() {
                     >
                       Submit Patient Registration Request
                     </Link>
+                  </div>
+                )}
+
+                {selectedRole === "secretary" && (
+                  <div className="mt-4 rounded-2xl border border-cyan-300/40 bg-cyan-100/30 p-4 shadow-sm backdrop-blur-xl">
+                    <p className="text-sm font-semibold text-slate-800">
+                      Looking for a secretary post?
+                    </p>
+
+                    <p className="mt-1 text-xs leading-5 text-slate-600">
+                      Send your details and your certificates. An
+                      administrator reviews the application, decides which
+                      doctor you would work with, and emails your sign-in
+                      details once you are approved.
+                    </p>
+
+                    <Link
+                      href="/secretary-request"
+                      className="mt-3 inline-flex w-full items-center justify-center rounded-xl border border-cyan-400/40 bg-white/45 px-4 py-2.5 text-sm font-semibold text-blue-700 transition hover:border-blue-400 hover:bg-white/70"
+                    >
+                      Submit Secretary Application
+                    </Link>
+
+                    <p className="mt-3 text-xs leading-5 text-slate-600">
+                      Already approved? Enter the email and temporary
+                      password the administrator sent you below.
+                    </p>
                   </div>
                 )}
 
