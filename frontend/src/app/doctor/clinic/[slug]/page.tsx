@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { useClinicCapabilities } from "@/components/ClinicAiStatus";
+import PasswordChangeGate from "@/components/PasswordChangeGate";
 import NotificationBell from "@/components/NotificationBell";
 import { authClient } from "@/client/auth/auth-client";
 
@@ -14,6 +15,7 @@ import { authClient } from "@/client/auth/auth-client";
 */
 type ClinicKey =
   | "head"
+  | "abdomen"
   | "chest"
   | "shoulder"
   | "hand-wrist"
@@ -64,6 +66,16 @@ const clinicData: Record<string, ClinicInformation> = {
     icon: "🧠",
     imageTypes: ["Brain MRI", "Head MRA", "Skull"],
     apiClinicKey: "head",
+  },
+
+  abdomen: {
+    name: "Abdomen Clinic",
+    specialty: "Abdominal Radiology",
+    description:
+      "Manage liver, kidney, pancreas, colon and adrenal CT volumes.",
+    icon: "🫀",
+    imageTypes: ["Abdomen CT", "Pancreas CT", "Colon CT", "Liver CT"],
+    apiClinicKey: "abdomen",
   },
 
   chest: {
@@ -182,7 +194,22 @@ function needsDoctorReview(study: ClinicStudy) {
     return false;
   }
 
-  return normalizeText(study.aiResult) !== "normal";
+  /*
+    Whether a case needs a doctor is decided when it is uploaded, and it
+    is decided by two things: what the AI saw and what the patient said.
+    A scan the AI read as normal, from somebody who wrote that their
+    chest hurts, needs a doctor precisely because the model cannot hear
+    them.
+
+    This used to drop every case whose AI result was "normal", which
+    threw away the second half of that decision. A patient who described
+    their symptoms watched their study vanish, and no doctor ever saw
+    the sentence they had written.
+
+    'Cleared' is the one the server closed: normal, and nothing
+    reported. It is the only case that belongs outside this queue.
+  */
+  return normalizeText(study.status) !== "cleared";
 }
 
 function isCompletedStatus(status: string) {
@@ -354,6 +381,15 @@ export default function ClinicDetailsPage() {
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-[#06142f] via-[#0a2450] to-[#071a38] px-6 py-8">
+      {/*
+        A doctor with one clinic is sent here the moment they sign in
+        and never sees the clinic list, so this is where the temporary
+        password an administrator issued has to be replaced. The gate
+        lived only on the list, which most doctors pass through without
+        ever rendering.
+      */}
+      <PasswordChangeGate />
+
       <div className="mx-auto max-w-7xl">
         {/*
           There is no way back to the clinic list here on purpose: a
@@ -536,8 +572,9 @@ export default function ClinicDetailsPage() {
                 {clinic.name} Review Queue
               </h2>
               <p className="mt-2 text-slate-400">
-                Normal results are saved in the patient record and do not appear
-                in this clinic.
+                A clear scan whose patient reported no symptoms stays in
+                their record and does not appear here. If they described
+                something, it is in this queue whatever the AI said.
               </p>
             </div>
 

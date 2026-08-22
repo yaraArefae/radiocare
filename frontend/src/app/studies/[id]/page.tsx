@@ -3,6 +3,7 @@ import CaseChat from "@/components/CaseChat";
 import CaseReport from "@/components/CaseReport";
 import VolumeViewer from "@/components/VolumeViewer";
 import NotificationBell from "@/components/NotificationBell";
+import SendToDoctorCard from "@/components/SendToDoctorCard";
 import StudyAppointment from "@/components/StudyAppointment";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -360,6 +361,25 @@ export default function StudyDetailsPage() {
             <NotificationBell />
           </div>
         </div>
+
+        {/*
+          A study nobody was asked to read says so first, above its own
+          details. Buried lower down it would read as a footnote to a
+          result, and it is not a footnote: it is the fact that there is
+          no result.
+        */}
+        {study.status === "Cleared" ? (
+          <div className="mt-6">
+            <SendToDoctorCard
+              studyId={String(study.id)}
+              onSent={() =>
+                setStudy((current) =>
+                  current ? { ...current, status: "Needs Review" } : current,
+                )
+              }
+            />
+          </div>
+        ) : null}
 
         <section className="mt-6 rounded-3xl border border-white/20 bg-white/[0.08] p-7 shadow-2xl backdrop-blur-2xl md:p-9">
           <p className="text-sm font-bold uppercase tracking-[0.2em] text-cyan-300">

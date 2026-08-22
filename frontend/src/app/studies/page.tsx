@@ -14,7 +14,14 @@ type StudyStatus =
   | "Waiting"
   | "Urgent"
   | "Reviewed"
-  | "Approved";
+  | "Approved"
+  /*
+    Read as normal by the AI and uploaded by somebody reporting no
+    symptoms, so it was never sent to a doctor. It sits in the patient's
+    records until they ask for a reading.
+  */
+  | "Cleared"
+  | "Needs Review";
 
 type Study = {
   id: string;
@@ -190,6 +197,14 @@ export default function StudiesPage() {
       return "border-cyan-300/30 bg-cyan-400/20 text-cyan-100";
     }
 
+    /*
+      Grey, not green. Nothing was found and nothing was checked, and a
+      colour that reads as "all clear" would be claiming the second.
+    */
+    if (studyStatus === "Cleared") {
+      return "border-white/20 bg-white/10 text-slate-300";
+    }
+
     return "border-amber-300/30 bg-amber-400/20 text-amber-100";
   }
 
@@ -344,6 +359,10 @@ export default function StudiesPage() {
 
               <option value="Urgent">
                 Urgent
+              </option>
+
+              <option value="Cleared">
+                Not sent to a doctor
               </option>
 
               <option value="Reviewed">

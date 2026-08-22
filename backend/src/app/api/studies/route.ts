@@ -903,11 +903,44 @@ export async function POST(request: Request) {
       "NOT_ANALYZED",
     ].includes(String(triageResult || "").trim().toUpperCase());
 
+    /*
+     * A clear scan from somebody who is not complaining of anything does
+     * not go to a doctor.
+     *
+     * Every upload used to land in a clinic queue, so a doctor's day
+     * filled with scans the AI had already called normal and whose owner
+     * had written nothing in the symptoms box. The ones that matter wait
+     * behind them.
+     *
+     * What the patient typed is the second opinion here. The AI reads
+     * the picture and nothing else; a person who says their chest hurts
+     * is describing something no X-ray carries, and that alone is enough
+     * to put the case in front of a doctor even when the model saw
+     * nothing. Only the two together - a normal reading and no
+     * complaint - close a case.
+     *
+     * Medical history does not count. A patient recording that they are
+     * diabetic is answering "what should a doctor know about you", not
+     * "what is wrong with you today".
+     *
+     * A closed case is not a finished one. It stays in the patient's own
+     * records and they can send it to a doctor themselves at any time,
+     * which is the route out of a wrong NORMAL.
+     */
+    const patientReportedSomething = Boolean(
+      symptoms && symptoms.trim(),
+    );
+
+    const clearedWithoutComplaint =
+      !needsDoctorReview && !patientReportedSomething;
+
     const studyStatus = needsDoctorReview
       ? "Needs Review"
-      : normalizedPriority === "Urgent"
-        ? "Urgent"
-        : "Waiting";
+      : clearedWithoutComplaint
+        ? "Cleared"
+        : normalizedPriority === "Urgent"
+          ? "Urgent"
+          : "Waiting";
 
     await sql.execute(
       `INSERT INTO study
@@ -1000,8 +1033,18 @@ export async function POST(request: Request) {
     return Response.json(
       {
         success: true,
-        message:
-          "The patient and study were saved successfully.",
+        /*
+          A closed case has to say so. A patient who uploads a scan and
+          is told it was "saved successfully" reasonably expects a doctor
+          to read it, and for this one nobody will unless they ask.
+        */
+        message: clearedWithoutComplaint
+          ? "The AI found nothing on this scan and you reported no " +
+            "symptoms, so it has not been sent to a doctor. It is saved " +
+            "in your records, and you can send it to one whenever you " +
+            "want."
+          : "The patient and study were saved successfully.",
+        sentToDoctor: !clearedWithoutComplaint,
         study: {
           id: studyId,
           patientId,
@@ -1087,10 +1130,10 @@ export async function GET(request: Request) {
      *   /studies?clinic=chest
      *
      * When a clinic is supplied, return the studies of that clinic that
-     * still need a doctor: an abnormal result, an uncertain one, or a
-     * region that has no AI model yet. Only clearly normal studies stay
-     * out of the queue. Requests without a clinic keep returning all
-     * studies, so the patient/admin study pages continue to work.
+     * still need a doctor. Only a case the server closed at upload -
+     * read as normal by the AI, with no symptom reported by the patient
+     * - stays out. Requests without a clinic keep returning all studies,
+     * so the patient and admin study pages continue to work.
      */
     const { searchParams } = new URL(request.url);
     const clinic = searchParams
@@ -1178,25 +1221,20 @@ export async function GET(request: Request) {
       queryValues.push(clinic);
 
       /*
-       * New records store the triage result inside the JSON explanation.
-       * The predicted_finding fallback keeps older ABNORMAL records working.
+       * Whether a case belongs in a clinic queue was decided when it was
+       * uploaded, out of two things: what the AI saw and what the
+       * patient wrote. That decision is the status.
+       *
+       * This used to re-decide it here, from the AI result alone, and
+       * drop every study the model had called normal. A patient who
+       * typed that their chest hurts had their study saved as Waiting
+       * and then filtered out of the queue on the way to the doctor, so
+       * the sentence they wrote reached nobody.
+       *
+       * 'Cleared' is the only case the server closed: read as normal,
+       * and no symptom reported. It is the only one that stays out.
        */
-      whereConditions.push(
-        `UPPER(TRIM(COALESCE(
-          CASE
-            WHEN JSON_VALID(a.explanation)
-            THEN JSON_UNQUOTE(
-              JSON_EXTRACT(
-                a.explanation,
-                '$.triageResult'
-              )
-            )
-            ELSE NULL
-          END,
-          a.predicted_finding,
-          'NOT_ANALYZED'
-        ))) <> 'NORMAL'`
-      );
+      whereConditions.push("s.status <> 'Cleared'");
     }
 
     const whereClause =

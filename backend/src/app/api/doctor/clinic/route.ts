@@ -106,7 +106,13 @@ export async function GET(request: Request) {
        FROM study s
        JOIN patient p ON p.id = s.patient_id
        LEFT JOIN ai_result a ON a.study_id = s.id
-       WHERE ${caseScope.condition}
+       /*
+         'Cleared' is a scan the AI read as normal whose owner reported
+         no symptoms, so it was never sent to anybody. It stays in the
+         patient's records and reappears here the moment they ask for a
+         reading.
+       */
+       WHERE ${caseScope.condition} AND s.status <> 'Cleared'
        ORDER BY s.created_at DESC`,
       caseScope.values,
     );
@@ -123,7 +129,7 @@ export async function GET(request: Request) {
          SUM(CASE WHEN status = 'Waiting' THEN 1 ELSE 0 END) AS waiting,
          SUM(CASE WHEN status = 'Reviewed' THEN 1 ELSE 0 END) AS reviewed
        FROM study
-       WHERE ${statScope.condition}`,
+       WHERE ${statScope.condition} AND status <> 'Cleared'`,
       statScope.values,
     );
 
