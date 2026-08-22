@@ -60,7 +60,15 @@ run_one() {
     --output-name "$name" > "$log_file" 2>&1
 
   if [ -f "models/$name/${name}_model.keras" ]; then
-    log "done  $name  $(grep -oE 'auc=[0-9.]+' "$log_file" | tail -1)"
+    # The weakest label, not the last one printed.
+    #
+    # This took the last auc= line in the log, which is whichever label
+    # happened to be printed last. A router whose weakest label reads
+    # 0.80 was logged as 1.0 because its final label was the easy one,
+    # and a model is worth its weakest finding.
+    weakest=$(grep -oE 'auc=[0-9.]+' "$log_file" | cut -d= -f2 | sort -g | head -1)
+    labels=$(grep -cE 'auc=[0-9.]+' "$log_file")
+    log "done  $name  weakest auc=$weakest over $labels label(s)"
   else
     log "FAIL  $name  (see $log_file)"
   fi

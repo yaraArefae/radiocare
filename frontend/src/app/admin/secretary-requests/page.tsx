@@ -154,8 +154,18 @@ export default function AdminSecretaryRequestsPage() {
     [applications],
   );
 
-  const availableDoctors = useMemo(
-    () => doctors.filter((doctor) => !doctor.hasSecretary),
+  /*
+    Every active doctor, including the ones who already have a
+    secretary.
+
+    Those used to be filtered out of the list entirely, which left an
+    administrator looking at a dropdown with a doctor missing from it
+    and no way to tell whether that doctor has no account or simply has
+    a secretary already. They are shown and disabled instead, so the
+    reason is on the screen rather than in somebody's memory.
+  */
+  const takenCount = useMemo(
+    () => doctors.filter((doctor) => doctor.hasSecretary).length,
     [doctors],
   );
 
@@ -350,7 +360,8 @@ export default function AdminSecretaryRequestsPage() {
               <ApplicationCard
                 key={application.id}
                 application={application}
-                doctors={availableDoctors}
+                doctors={doctors}
+                takenCount={takenCount}
                 onAct={act}
               />
             ))}
@@ -364,10 +375,12 @@ export default function AdminSecretaryRequestsPage() {
 function ApplicationCard({
   application,
   doctors,
+  takenCount,
   onAct,
 }: {
   application: SecretaryApplication;
   doctors: DoctorChoice[];
+  takenCount: number;
   onAct: (
     requestId: string,
     action: "approve" | "reject" | "request-info",
@@ -547,18 +560,33 @@ function ApplicationCard({
                   <option value="">Choose a doctor...</option>
 
                   {doctors.map((doctor) => (
-                    <option key={doctor.userId} value={doctor.userId}>
+                    <option
+                      key={doctor.userId}
+                      value={doctor.userId}
+                      disabled={doctor.hasSecretary}
+                    >
                       {doctor.fullName}
                       {doctor.specialty ? ` — ${doctor.specialty}` : ""}
+                      {doctor.hasSecretary ? " (has a secretary)" : ""}
                     </option>
                   ))}
                 </select>
-                {doctors.length === 0 && (
+
+                {doctors.length === 0 ? (
                   <span className="mt-2 block text-xs text-amber-200">
-                    Every active doctor already has a secretary. Remove
-                    one on the secretaries page first.
+                    There are no active doctors to assign this secretary
+                    to.
                   </span>
-                )}
+                ) : takenCount > 0 ? (
+                  <span className="mt-2 block text-xs text-slate-400">
+                    {takenCount} doctor{takenCount === 1 ? "" : "s"} in
+                    the list already{" "}
+                    {takenCount === 1 ? "has" : "have"} a secretary and
+                    cannot be chosen. One calendar takes one secretary;
+                    free the current one on the secretaries page to
+                    reassign.
+                  </span>
+                ) : null}
               </label>
 
               <button

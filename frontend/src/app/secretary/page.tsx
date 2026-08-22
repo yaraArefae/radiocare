@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import PasswordChangeGate from "@/components/PasswordChangeGate";
 import StudyAppointmentChat from "@/components/StudyAppointmentChat";
 import { authClient } from "@/client/auth/auth-client";
 
@@ -226,6 +227,15 @@ export default function SecretaryPage() {
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-[#06142f] via-[#0a2450] to-[#071a38] px-5 py-8">
+      {/*
+        A secretary arrives here with the password an administrator
+        issued, and this is where she is asked to replace it. The gate
+        was mounted on the doctor's and the patient's landing pages only,
+        so the temporary password an administrator handed a secretary
+        stayed her password, and the expiry recorded against it was
+        never read.
+      */}
+      <PasswordChangeGate />
       <div className="mx-auto max-w-5xl">
         <p className="text-sm font-bold uppercase tracking-[0.22em] text-cyan-300">
           Secretary

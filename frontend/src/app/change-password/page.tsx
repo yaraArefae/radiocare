@@ -31,6 +31,7 @@ export default function ChangePasswordPage() {
     if (roles.includes("admin")) return "/dashboard";
     if (roles.includes("doctor")) return "/doctor/clinic";
     if (roles.includes("patient")) return "/patients/dashboard";
+    if (roles.includes("secretary")) return "/secretary";
 
     return "/dashboard";
   })();
