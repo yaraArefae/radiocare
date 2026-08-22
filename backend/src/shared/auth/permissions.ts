@@ -120,10 +120,36 @@ export const patientRole = ac.newRole({
   audit: [],
 });
 
+/*
+  Secretary:
+  works for exactly one doctor and manages that doctor's calendar.
+
+  The permissions are deliberately narrow. A secretary books, moves and
+  cancels appointments, and to do that they need the patient's name and
+  a telephone number, which is what "patient: read" covers. They are
+  given nothing on study or report: the X-ray, the AI finding and the
+  doctor's written report are the patient's medical record, and booking
+  a visit never requires reading one.
+
+  Which doctor they act for is not in this table. It is a row in
+  secretary_profile, because a permission says what someone may do and
+  this says whose calendar they may do it to.
+*/
+export const secretaryRole = ac.newRole({
+  study: [],
+
+  report: [],
+
+  patient: ["read"],
+
+  audit: [],
+});
+
 export const roles = {
   admin: adminRole,
   doctor: doctorRole,
   patient: patientRole,
+  secretary: secretaryRole,
 };
 
 export type AppRole = keyof typeof roles;
