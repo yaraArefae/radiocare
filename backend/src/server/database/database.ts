@@ -72,6 +72,27 @@ async function addColumnWhenMissing(
 }
 
 /*
+  The same problem for indexes: MySQL has no "CREATE INDEX IF NOT
+  EXISTS" either, so the index is looked up before it is created.
+*/
+async function addIndexWhenMissing(
+  tableName: string,
+  indexName: string,
+  columns: string,
+) {
+  const [rows] = await sql.query(
+    `SHOW INDEX FROM \`${tableName}\` WHERE Key_name = ?`,
+    [indexName],
+  );
+
+  if ((rows as unknown[]).length > 0) return;
+
+  await sql.query(
+    `CREATE INDEX \`${indexName}\` ON \`${tableName}\` (${columns})`,
+  );
+}
+
+/*
   Moves the records that were written while every bone case shared one
   "bone" clinic over to the clinic of their own body region, and gives
   the doctors approved back then the clinics of their specialty.
@@ -257,6 +278,88 @@ async function initializeDatabase() {
       model_version VARCHAR(100) NULL, explanation TEXT NULL, heatmap_path TEXT NULL,
       created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
     ) ENGINE=InnoDB`,
+    /*
+      What a patient thought of the doctor who read their study.
+
+      The rating shown on a doctor card is the average of these rows and
+      nothing else. A number typed in by an administrator would look the
+      same to a patient choosing who to trust with an X-ray, and would
+      mean nothing, so there is no column anywhere to type one into.
+
+      One review per study: a patient rates the reading they received,
+      not the doctor in general, and cannot rate the same reading twice.
+    */
+    `CREATE TABLE IF NOT EXISTS doctor_review (
+      id VARCHAR(64) PRIMARY KEY, doctor_id VARCHAR(64) NOT NULL,
+      patient_id VARCHAR(64) NOT NULL, study_id VARCHAR(64) NOT NULL UNIQUE,
+      rating TINYINT NOT NULL, comment TEXT NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      INDEX idx_review_doctor (doctor_id),
+      CONSTRAINT fk_review_doctor FOREIGN KEY (doctor_id) REFERENCES doctor_profile(id),
+      CONSTRAINT chk_review_rating CHECK (rating BETWEEN 1 AND 5)
+    ) ENGINE=InnoDB`,
+    /*
+      A secretary, and the one doctor they work for.
+
+      The link is a column rather than a join table because the
+      relationship is deliberately one to one: a secretary who could be
+      attached to several doctors would be able to move appointments
+      between them, and neither doctor would know whose secretary made
+      the change.
+
+      user_id is unique for the same reason. Two rows for one login
+      would make "which doctor does this person act for" a question with
+      two answers, and every appointment they touched ambiguous.
+    */
+    `CREATE TABLE IF NOT EXISTS secretary_profile (
+      id VARCHAR(64) PRIMARY KEY, user_id VARCHAR(64) NOT NULL UNIQUE,
+      doctor_user_id VARCHAR(64) NOT NULL,
+      full_name VARCHAR(255) NOT NULL, phone VARCHAR(100) NULL,
+      status VARCHAR(30) NOT NULL DEFAULT 'Active',
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      INDEX idx_secretary_doctor (doctor_user_id),
+      CONSTRAINT fk_secretary_user FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE,
+      CONSTRAINT fk_secretary_doctor FOREIGN KEY (doctor_user_id) REFERENCES user(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB`,
+    /*
+      A secretary applying for a job, before there is an account.
+
+      Secretaries used to appear only when an administrator typed one in,
+      which meant the person hired had never sent anything: no papers, no
+      qualification, nothing to check. This is the same road a doctor
+      takes, cut to what a secretary is actually asked for. There is no
+      medical licence here and no specialty, because a secretary does not
+      read studies; what is verified is who they are and that they were
+      trained for the desk.
+
+      The doctor they end up working for is decided at approval, not
+      here. The form never asks: staffing a clinic is not the
+      applicant's call, and a field that only ever gets ignored is worse
+      than no field at all.
+    */
+    `CREATE TABLE IF NOT EXISTS secretary_application (
+      id VARCHAR(64) PRIMARY KEY, full_name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) NOT NULL UNIQUE, phone VARCHAR(100) NOT NULL,
+      date_of_birth VARCHAR(20) NULL, national_id VARCHAR(100) NOT NULL UNIQUE,
+      qualification VARCHAR(255) NOT NULL, institute VARCHAR(255) NOT NULL,
+      graduation_year INT NULL, years_of_experience INT NOT NULL DEFAULT 0,
+      current_workplace VARCHAR(255) NULL, languages JSON NOT NULL,
+      about TEXT NULL,
+      id_document_path TEXT NOT NULL, qualification_certificate_path TEXT NOT NULL,
+      experience_certificate_path TEXT NULL, cv_path TEXT NULL, photo_path TEXT NULL,
+      declaration_accepted BOOLEAN NOT NULL,
+      status VARCHAR(50) NOT NULL DEFAULT 'Pending', admin_notes TEXT NULL,
+      requested_more_info TEXT NULL, rejection_reason TEXT NULL,
+      reviewed_by VARCHAR(64) NULL, reviewed_at DATETIME(3) NULL,
+      assigned_doctor_user_id VARCHAR(64) NULL, approved_user_id VARCHAR(64) NULL,
+      login_email VARCHAR(255) NULL, must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+      temporary_password_issued_at DATETIME(3) NULL,
+      temporary_password_expires_at DATETIME(3) NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      INDEX idx_secretary_app_status_created (status, created_at)
+    ) ENGINE=InnoDB`,
     `CREATE TABLE IF NOT EXISTS report (
       id VARCHAR(64) PRIMARY KEY, study_id VARCHAR(64) NOT NULL UNIQUE, radiologist_id VARCHAR(64) NULL,
       findings TEXT NULL, impression TEXT NULL, recommendations TEXT NULL, status VARCHAR(30) NOT NULL DEFAULT 'Draft',
@@ -320,6 +423,32 @@ async function initializeDatabase() {
       INDEX idx_notification_user (user_id, is_read, created_at),
       CONSTRAINT fk_notification_user FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE
     ) ENGINE=InnoDB`,
+    /*
+      The line between a doctor or a patient and the administration.
+
+      The two chats the application already had hang off something: a
+      study or an appointment. This one cannot, because the reasons to
+      write to an administrator - a wrong clinic on a profile, an
+      account that will not open, a question about a request - exist
+      before any case does.
+
+      There is one thread per person, not one per pair of people:
+      user_id names whose thread it is and is never an administrator.
+      Any administrator can answer in it, because the administration is
+      a desk rather than a person, and a doctor waiting on an answer
+      should not be waiting on one particular employee.
+    */
+    `CREATE TABLE IF NOT EXISTS support_message (
+      id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+      user_id VARCHAR(64) NOT NULL,
+      sender_id VARCHAR(64) NOT NULL,
+      sender_role VARCHAR(30) NOT NULL,
+      message TEXT NOT NULL,
+      is_read BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      INDEX idx_support_user (user_id, created_at),
+      CONSTRAINT fk_support_user FOREIGN KEY (user_id) REFERENCES \`user\`(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB`,
     `CREATE TABLE IF NOT EXISTS chat_message (
       id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
       appointment_id VARCHAR(64) NOT NULL,
@@ -360,8 +489,124 @@ async function initializeDatabase() {
   */
   await addColumnWhenMissing("patient", "symptoms", "TEXT NULL");
   await addColumnWhenMissing("patient", "medical_history", "TEXT NULL");
+  /*
+    The patient's age and gender as they were when this study was taken.
+
+    They used to live only on the patient row, which every upload
+    overwrote. A patient who was 66 for one scan and typed 55 for the
+    next had both scans reading 55 afterwards, including the one a
+    doctor had already reported on. Age at the time of imaging is part
+    of the reading, not a current fact about the person: a fracture
+    pattern means something different in a child than in an adult.
+
+    The patient row still holds the latest, which is what an address
+    book is for. The study holds what was true when it was taken.
+  */
+  await addColumnWhenMissing("study", "patient_age", "INT NULL");
+  await addColumnWhenMissing(
+    "study",
+    "patient_gender",
+    "VARCHAR(20) NULL",
+  );
+
   await addColumnWhenMissing("study", "symptoms", "TEXT NULL");
   await addColumnWhenMissing("study", "medical_history", "TEXT NULL");
+
+  /*
+    Whether a study is a single film or a stack of slices.
+
+    A CT cannot be shown in an image tag and is not read the way a
+    radiograph is, so the pages that display a study have to know which
+    of the two they were handed. Every record written before volumetric
+    studies existed is a film, which is what the default says.
+  */
+  await addColumnWhenMissing(
+    "study",
+    "study_kind",
+    "VARCHAR(20) NOT NULL DEFAULT 'IMAGE'",
+  );
+
+  /*
+    What a patient needs to choose between two doctors of one clinic.
+    None of these are required: a doctor who filled nothing in still
+    appears, with their specialty, licence and years of experience,
+    which the application has always held.
+  */
+  /*
+    The doctor's own photograph.
+
+    It is stored apart from their licence and identity papers on
+    purpose. Those are private and reachable only through a route that
+    checks for an administrator; this one is shown to every patient
+    browsing a clinic. Keeping them in one place would mean one wrong
+    permission check exposes a passport scan.
+  */
+  await addColumnWhenMissing("doctor_profile", "photo_path", "TEXT NULL");
+  await addColumnWhenMissing(
+    "doctor_application",
+    "photo_path",
+    "TEXT NULL",
+  );
+
+  /*
+    What an approved secretary brought with them from their application.
+
+    A secretary hired before there was an application has none of this,
+    so every column is nullable: the older rows stay valid and simply
+    have nothing to show.
+  */
+  await addColumnWhenMissing(
+    "secretary_profile",
+    "application_id",
+    "VARCHAR(64) NULL",
+  );
+  await addColumnWhenMissing("secretary_profile", "photo_path", "TEXT NULL");
+  await addColumnWhenMissing(
+    "secretary_profile",
+    "national_id",
+    "VARCHAR(100) NULL",
+  );
+  await addColumnWhenMissing(
+    "secretary_profile",
+    "qualification",
+    "VARCHAR(255) NULL",
+  );
+  await addColumnWhenMissing(
+    "secretary_profile",
+    "years_of_experience",
+    "INT NULL",
+  );
+  await addColumnWhenMissing("secretary_profile", "languages", "JSON NULL");
+  await addIndexWhenMissing(
+    "secretary_profile",
+    "idx_secretary_application",
+    "application_id",
+  );
+
+  await addColumnWhenMissing("doctor_profile", "bio", "TEXT NULL");
+  await addColumnWhenMissing("doctor_profile", "languages", "JSON NULL");
+  await addColumnWhenMissing(
+    "doctor_profile",
+    "consultation_price",
+    "DECIMAL(10,2) NULL",
+  );
+
+  /*
+    The doctor a study was sent to.
+
+    Until now a study reached a clinic and whoever opened that clinic
+    read it. A patient who picked a doctor is owed that doctor, so the
+    choice is recorded here. It stays nullable: every study uploaded
+    before this existed went to a clinic rather than a person, and a
+    patient may still leave the choice to the clinic.
+  */
+  await addColumnWhenMissing(
+    "study",
+    "doctor_id",
+    "VARCHAR(64) NULL",
+  );
+
+  await addIndexWhenMissing("study", "idx_study_doctor", "doctor_id");
   await addColumnWhenMissing("report", "ai_agreement", "VARCHAR(30) NULL");
   await addColumnWhenMissing("report", "final_finding", "VARCHAR(255) NULL");
   await addColumnWhenMissing("report", "severity", "VARCHAR(30) NULL");
@@ -434,43 +679,17 @@ async function initializeDatabase() {
 
   const seedUsers = [
     { name: "RadioCare Admin", email: "admin@radiocare.com", role: "admin" },
-    { name: "RadioCare Doctor", email: "doctor@radiocare.com", role: "doctor" },
-    /*
-      One doctor for every clinic. A clinic without a doctor is a dead
-      end: the patient can upload to it, but nobody is ever told about
-      the case.
-    */
-    {
-      name: "RadioCare Shoulder Doctor",
-      email: "doctor.ortho@radiocare.com",
-      role: "doctor",
-    },
-    {
-      name: "RadioCare Hand & Wrist Doctor",
-      email: "doctor.hand@radiocare.com",
-      role: "doctor",
-    },
-    {
-      name: "RadioCare Head & Skull Doctor",
-      email: "doctor.head@radiocare.com",
-      role: "doctor",
-    },
-    {
-      name: "RadioCare Spine Doctor",
-      email: "doctor.spine@radiocare.com",
-      role: "doctor",
-    },
-    {
-      name: "RadioCare Pelvis & Hip Doctor",
-      email: "doctor.pelvis@radiocare.com",
-      role: "doctor",
-    },
-    {
-      name: "RadioCare Leg, Knee & Foot Doctor",
-      email: "doctor.leg@radiocare.com",
-      role: "doctor",
-    },
     { name: "RadioCare Patient", email: "patient@radiocare.com", role: "patient" },
+    /*
+      One doctor per clinic. A clinic without a doctor is a dead end: the
+      patient can upload to it, but nobody is ever told about the case.
+    */
+    { name: "Chest", email: "chest@radiocare.com", role: "doctor" },
+    { name: "Shoulder", email: "shoulder@radiocare.com", role: "doctor" },
+    { name: "Hand.Wrist", email: "hand.wrist@radiocare.com", role: "doctor" },
+    { name: "Spine", email: "spine@radiocare.com", role: "doctor" },
+    { name: "Pelvis.Hip", email: "pelvis.hip@radiocare.com", role: "doctor" },
+    { name: "Leg.Foot", email: "leg.knee.foot@radiocare.com", role: "doctor" },
   ];
   const password = await hashPassword("RadioCare@2026");
 
@@ -499,49 +718,43 @@ const userId = crypto.randomUUID();    const now = new Date();
   */
   const demoDoctorProfiles = [
     {
-      email: "doctor@radiocare.com",
-      fullName: "RadioCare Chest Doctor",
+      email: "chest@radiocare.com",
+      fullName: "Chest",
       specialty: "Chest Radiology",
       clinics: "chest",
     },
-    /*
-      This account already answered shoulder cases before the arm was
-      split into two clinics, so it keeps the shoulder clinic and its
-      conversations stay reachable.
-    */
     {
-      email: "doctor.ortho@radiocare.com",
-      fullName: "RadioCare Shoulder Doctor",
+      email: "shoulder@radiocare.com",
+      fullName: "Shoulder",
       specialty: "Shoulder Imaging",
       clinics: "shoulder",
     },
     {
-      email: "doctor.hand@radiocare.com",
-      fullName: "RadioCare Hand & Wrist Doctor",
+      email: "hand.wrist@radiocare.com",
+      fullName: "Hand.Wrist",
       specialty: "Hand & Wrist Imaging",
       clinics: "hand-wrist",
     },
     {
-      email: "doctor.head@radiocare.com",
-      fullName: "RadioCare Head & Skull Doctor",
-      specialty: "Head & Skull Imaging",
-      clinics: "head",
-    },
-    {
-      email: "doctor.spine@radiocare.com",
-      fullName: "RadioCare Spine Doctor",
+      email: "spine@radiocare.com",
+      fullName: "Spine",
       specialty: "Spine Imaging",
       clinics: "spine",
     },
     {
-      email: "doctor.pelvis@radiocare.com",
-      fullName: "RadioCare Pelvis & Hip Doctor",
+      email: "pelvis.hip@radiocare.com",
+      fullName: "Pelvis.Hip",
       specialty: "Pelvis & Hip Imaging",
       clinics: "pelvis",
     },
     {
-      email: "doctor.leg@radiocare.com",
-      fullName: "RadioCare Leg, Knee & Foot Doctor",
+      email: "leg.knee.foot@radiocare.com",
+      /*
+        The address is the account's identity and stays as it was, so a
+        database seeded before the knee left keeps one doctor for this
+        clinic instead of gaining a second one.
+      */
+      fullName: "Leg.Foot",
       specialty: "Lower Limb Imaging",
       clinics: "lower-limb",
     },
