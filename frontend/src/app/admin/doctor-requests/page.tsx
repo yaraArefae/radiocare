@@ -5,6 +5,11 @@ import Link from "next/link";
 import { createPortal } from "react-dom";
 
 import AdminNav from "@/components/AdminNav";
+import DoctorAccessButton from "@/components/DoctorAccessButton";
+
+const backendBaseUrl = (
+  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:4000"
+).replace(/\/$/, "");
 import {
   type FormEvent,
   useCallback,
@@ -52,6 +57,12 @@ type DoctorRequest = {
   rejection_reason: string | null;
   requested_more_info: string | null;
   login_email: string | null;
+  /*
+    The account created on approval, and the current state of that
+    doctor's access. Both are needed to withdraw it again.
+  */
+  approved_user_id: string | null;
+  doctor_status?: string | null;
   created_at: string;
 };
 
@@ -148,8 +159,8 @@ export default function AdminDoctorRequestsPage() {
       <div className="pointer-events-none fixed -right-40 bottom-0 h-[560px] w-[560px] rounded-full bg-cyan-400/20 blur-[180px]" />
 
       <header className="relative z-20 border-b border-white/15 bg-blue-950/45 backdrop-blur-2xl">
-        <div className="mx-auto flex max-w-[1700px] items-center justify-between px-5 py-4 sm:px-7">
-        <AdminNav />
+        {/* Logo, then the menu; the way back sits at the far end. */}
+        <div className="mx-auto flex max-w-[1700px] flex-wrap items-center gap-3 px-5 py-4 sm:px-7">
           <Link
             href="/dashboard"
             className="flex items-center gap-3"
@@ -176,9 +187,13 @@ export default function AdminDoctorRequestsPage() {
             </div>
           </Link>
 
+          <div className="min-w-0 flex-1">
+            <AdminNav compact />
+          </div>
+
           <Link
             href="/dashboard"
-            className="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold transition hover:bg-white/15"
+            className="ml-auto rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold transition hover:bg-white/15"
           >
             Back to dashboard
           </Link>
@@ -482,11 +497,15 @@ function DoctorRequestCard({
         <DocumentBox
           label="ID document"
           value={requestItem.id_document_path}
+          requestId={requestItem.id}
+          kind="id-document"
         />
 
         <DocumentBox
           label="Medical license"
           value={requestItem.medical_license_path}
+          requestId={requestItem.id}
+          kind="medical-license"
         />
 
         <DocumentBox
@@ -494,11 +513,15 @@ function DoctorRequestCard({
           value={
             requestItem.specialty_certificate_path
           }
+          requestId={requestItem.id}
+          kind="specialty-certificate"
         />
 
         <DocumentBox
           label="CV"
           value={requestItem.cv_path}
+          requestId={requestItem.id}
+          kind="cv"
         />
       </div>
 
@@ -518,9 +541,25 @@ function DoctorRequestCard({
 
       {requestItem.status === "Approved" &&
         requestItem.login_email && (
-          <div className="mt-6 rounded-2xl border border-green-300/30 bg-green-500/15 p-4 text-sm text-green-100">
-            Approved login email:{" "}
-            {requestItem.login_email}
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-green-300/30 bg-green-500/15 p-4 text-sm text-green-100">
+            <span>
+              Approved login email:{" "}
+              {requestItem.login_email}
+            </span>
+
+            {/*
+              Withdrawing access after approval. Nothing is deleted: the
+              reports this doctor signed stay in the record of every
+              patient they read for, and a report whose author vanished
+              is one nobody can stand behind.
+            */}
+            {requestItem.approved_user_id ? (
+              <DoctorAccessButton
+                userId={requestItem.approved_user_id}
+                name={requestItem.full_name}
+                initialStatus={requestItem.doctor_status ?? "Active"}
+              />
+            ) : null}
           </div>
         )}
 
@@ -661,19 +700,42 @@ function InfoBox({
 function DocumentBox({
   label,
   value,
+  requestId,
+  kind,
 }: {
   label: string;
   value: string;
+  requestId: string;
+  kind: string;
 }) {
+  /*
+    A stored path means the file itself reached the server and can be
+    opened. Applications sent before documents were uploaded carry only
+    the name the sender's browser reported, and that is said plainly
+    rather than offered as a link that leads nowhere.
+  */
+  const hasFile = String(value ?? "").startsWith("storage/");
+
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-      <p className="text-sm font-semibold text-white">
-        {label}
-      </p>
+      <p className="text-sm font-semibold text-white">{label}</p>
 
-      <p className="mt-2 break-all text-xs leading-5 text-cyan-200">
-        {value}
-      </p>
+      {hasFile ? (
+        <a
+          href={`${backendBaseUrl}/api/doctor-requests/${encodeURIComponent(
+            requestId,
+          )}/document/${kind}`}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-2 inline-flex items-center gap-2 rounded-xl border border-cyan-300/30 bg-cyan-400/10 px-3 py-2 text-xs font-bold text-cyan-100 transition hover:bg-cyan-400/20"
+        >
+          Open document ↗
+        </a>
+      ) : (
+        <p className="mt-2 break-all text-xs leading-5 text-amber-200">
+          No file uploaded{value ? ` (name given: ${value})` : ""}
+        </p>
+      )}
     </div>
   );
 }

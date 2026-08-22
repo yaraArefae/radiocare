@@ -84,6 +84,22 @@ export default function DoctorRequestPage() {
   const [form, setForm] =
     useState<DoctorRequestForm>(defaultForm);
 
+  /*
+    The chosen documents, kept next to the text fields so they can be
+    sent with the application instead of only their names.
+  */
+  const [selectedFiles, setSelectedFiles] = useState<{
+    idDocumentPath: File | null;
+    medicalLicensePath: File | null;
+    specialtyCertificatePath: File | null;
+    cvPath: File | null;
+  }>({
+    idDocumentPath: null,
+    medicalLicensePath: null,
+    specialtyCertificatePath: null,
+    cvPath: null,
+  });
+
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [applicationId, setApplicationId] =
@@ -105,8 +121,9 @@ export default function DoctorRequestPage() {
   }
 
   /*
-    مؤقتًا نحفظ اسم الملف فقط داخل الطلب.
-    لاحقًا نربط رفع الملفات الفعلي ونحفظ مسار الملف.
+    The chosen file is held so it can be sent with the request. Only its
+    name used to be kept, which left an administrator verifying a
+    medical licence while looking at the word "licence.pdf".
   */
   function handleFileSelection(
     event: ChangeEvent<HTMLInputElement>,
@@ -116,7 +133,9 @@ export default function DoctorRequestPage() {
       | "specialtyCertificatePath"
       | "cvPath"
   ) {
-    const file = event.target.files?.[0];
+    const file = event.target.files?.[0] ?? null;
+
+    setSelectedFiles((current) => ({ ...current, [field]: file }));
 
     updateField(field, file ? file.name : "");
   }
@@ -156,19 +175,41 @@ export default function DoctorRequestPage() {
         "/api/doctor-requests",
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            ...form,
-            yearsOfExperience: Number(
-              form.yearsOfExperience
-            ),
-            graduationYear: Number(
-              form.graduationYear
-            ),
-            additionalDocuments: [],
-          }),
+          /*
+            Sent as multipart so the documents travel with the fields.
+            No Content-Type header: the browser sets it with the
+            boundary that separates the parts.
+          */
+          body: (() => {
+            const payload = new FormData();
+
+            payload.append(
+              "application",
+              JSON.stringify({
+                ...form,
+                yearsOfExperience: Number(form.yearsOfExperience),
+                graduationYear: Number(form.graduationYear),
+                additionalDocuments: [],
+              }),
+            );
+
+            const documentParts: Array<
+              [string, keyof typeof selectedFiles]
+            > = [
+              ["id-document", "idDocumentPath"],
+              ["medical-license", "medicalLicensePath"],
+              ["specialty-certificate", "specialtyCertificatePath"],
+              ["cv", "cvPath"],
+            ];
+
+            for (const [partName, field] of documentParts) {
+              const file = selectedFiles[field];
+
+              if (file) payload.append(partName, file);
+            }
+
+            return payload;
+          })(),
         }
       );
 

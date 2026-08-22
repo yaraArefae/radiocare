@@ -35,6 +35,13 @@ type DoctorRecord = {
     patientRegions: string[];
     caseCount: number;
   }>;
+  applicationId: string | null;
+  documents: Array<{
+    kind: string;
+    label: string;
+    available: boolean;
+    givenName: string;
+  }>;
   waitingCases: Array<{
     id: string;
     patientId: string;
@@ -297,6 +304,52 @@ export default function AdminDoctorRecordPage() {
                 </Link>
               </div>
             </section>
+
+            {record.documents.length > 0 && (
+              <section className="mt-7 rounded-3xl border border-white/20 bg-white/[0.08] p-7 backdrop-blur-2xl">
+                <h2 className="text-xl font-black text-white">
+                  Credential documents
+                </h2>
+
+                <p className="mt-2 text-slate-300">
+                  The papers submitted with the application this doctor was
+                  approved from.
+                </p>
+
+                <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                  {record.documents.map((document) => (
+                    <div
+                      key={document.kind}
+                      className="rounded-2xl border border-white/15 bg-white/[0.05] p-4"
+                    >
+                      <p className="text-sm font-bold text-white">
+                        {document.label}
+                      </p>
+
+                      {document.available && record.applicationId ? (
+                        <a
+                          href={`${backendBaseUrl}/api/doctor-requests/${encodeURIComponent(
+                            record.applicationId,
+                          )}/document/${document.kind}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-3 inline-flex rounded-xl border border-cyan-300/30 bg-cyan-400/10 px-3 py-2 text-xs font-bold text-cyan-100 transition hover:bg-cyan-400/20"
+                        >
+                          Open document ↗
+                        </a>
+                      ) : (
+                        <p className="mt-3 break-all text-xs leading-5 text-amber-200">
+                          No file uploaded
+                          {document.givenName
+                            ? ` (name given: ${document.givenName})`
+                            : ""}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
 
             <div className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
               <Counter label="Cases in clinics" value={record.counters.cases} />

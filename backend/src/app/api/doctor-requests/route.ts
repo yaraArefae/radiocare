@@ -3,6 +3,13 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 
 import { auth } from "@/server/auth/auth";
+import {
+  DOCUMENT_KINDS,
+  DOCUMENT_LABELS,
+  saveDoctorDocument,
+  type DocumentKind,
+} from "@/server/documents/doctor-documents";
+import { saveDoctorPhoto } from "@/server/documents/doctor-photo";
 import { databaseReady, sql } from "@/server/database/database";
 import { notifyAdmins } from "@/server/notifications/notifications";
 
@@ -118,8 +125,49 @@ function serializeApplicationRow(
 */
 export async function POST(request: NextRequest) {
   try {
-    const body =
-      (await request.json()) as DoctorRequestBody;
+    /*
+      The form sends the credential documents as files, so the request
+      arrives as multipart. Older callers that send plain JSON are still
+      accepted; their applications simply carry a file name and no file,
+      which is what every application looked like before.
+    */
+    const contentType = request.headers.get("content-type") ?? "";
+    const isMultipart = contentType.includes("multipart/form-data");
+
+    let uploadedFiles: Partial<Record<DocumentKind, File>> = {};
+    let profilePhoto: File | null = null;
+    let body: DoctorRequestBody;
+
+    if (isMultipart) {
+      const form = await request.formData();
+
+      const fields = form.get("application");
+
+      body = JSON.parse(
+        typeof fields === "string" ? fields : "{}",
+      ) as DoctorRequestBody;
+
+      for (const kind of DOCUMENT_KINDS) {
+        const file = form.get(kind);
+
+        if (file instanceof File && file.size > 0) {
+          uploadedFiles[kind] = file;
+        }
+      }
+
+      /*
+        The profile photograph, which is not a credential document and is
+        not stored with them. A patient sees it; an administrator never
+        has to verify it.
+      */
+      const photo = form.get("profile-photo");
+
+      if (photo instanceof File && photo.size > 0) {
+        profilePhoto = photo;
+      }
+    } else {
+      body = (await request.json()) as DoctorRequestBody;
+    }
 
     const fullName = readRequiredText(
       body.fullName,
@@ -272,6 +320,46 @@ export async function POST(request: NextRequest) {
 
     const applicationId = `DOC-REQ-${randomUUID()}`;
 
+    /*
+      The uploaded documents are written before the row is inserted, so
+      an application never claims to hold a licence that was rejected on
+      its way to disk.
+    */
+    const storedPaths: Partial<Record<DocumentKind, string>> = {};
+
+    for (const kind of DOCUMENT_KINDS) {
+      const file = uploadedFiles[kind];
+
+      if (!file) continue;
+
+      const result = await saveDoctorDocument({
+        applicationId,
+        kind,
+        file,
+      });
+
+      if ("error" in result) {
+        return NextResponse.json({ message: result.error }, { status: 400 });
+      }
+
+      storedPaths[kind] = result.storedPath;
+    }
+
+    let photoPath: string | null = null;
+
+    if (profilePhoto) {
+      const savedPhoto = await saveDoctorPhoto(applicationId, profilePhoto);
+
+      if (!savedPhoto.ok) {
+        return NextResponse.json(
+          { message: savedPhoto.message },
+          { status: 400 },
+        );
+      }
+
+      photoPath = savedPhoto.relativePath;
+    }
+
     await databaseReady;
     await sql.execute(
       `INSERT INTO doctor_application
@@ -281,15 +369,18 @@ export async function POST(request: NextRequest) {
         current_workplace, medical_degree, university, graduation_year,
         supported_imaging_types, supported_body_regions, id_document_path,
         medical_license_path, specialty_certificate_path, cv_path,
-        additional_documents, declaration_accepted, status, must_change_password)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', TRUE)`,
+        additional_documents, declaration_accepted, photo_path, status, must_change_password)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', TRUE)`,
       [applicationId, fullName, email, phone, dateOfBirth, nationalId,
         specialty, subspecialty, licenseNumber, licensingAuthority,
         licenseCountry, licenseIssueDate, licenseExpiryDate, yearsOfExperience,
         currentWorkplace, medicalDegree, university, graduationYear,
-        JSON.stringify([]), JSON.stringify([]), idDocumentPath,
-        medicalLicensePath, specialtyCertificatePath, cvPath,
-        JSON.stringify(additionalDocuments), true],
+        JSON.stringify([]), JSON.stringify([]),
+        storedPaths["id-document"] ?? idDocumentPath,
+        storedPaths["medical-license"] ?? medicalLicensePath,
+        storedPaths["specialty-certificate"] ?? specialtyCertificatePath,
+        storedPaths["cv"] ?? cvPath,
+        JSON.stringify(additionalDocuments), true, photoPath],
     );
 
     await notifyAdmins({
@@ -375,7 +466,18 @@ export async function GET(request: NextRequest) {
       ["Rejected", 5], ["Suspended", 6],
     ]);
     await databaseReady;
-    const [result] = await sql.query("SELECT * FROM doctor_application ORDER BY created_at DESC");
+    /*
+      The doctor profile status travels with the application so the
+      administration can see, on the same card that approved somebody,
+      whether their access has since been withdrawn. Without it the
+      page would offer to withdraw an account that already is.
+    */
+    const [result] = await sql.query(
+      `SELECT a.*, dp.status AS doctor_status
+       FROM doctor_application a
+       LEFT JOIN doctor_profile dp ON dp.user_id = a.approved_user_id
+       ORDER BY a.created_at DESC`,
+    );
     const rows = result as Array<Record<string, unknown>>;
     rows.sort((a, b) =>
       (statusOrder.get(String(a.status)) ?? 7) -

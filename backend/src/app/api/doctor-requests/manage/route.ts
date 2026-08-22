@@ -36,6 +36,8 @@ type SessionUser = {
 
 type DoctorRequestRow = {
   id: string;
+  /* Null for every application sent before photos were collected. */
+  photo_path?: string | null;
   full_name: string;
   email: string;
   phone: string;
@@ -188,7 +190,7 @@ async function getDoctorRequest(
   const [rows] = await sql.execute(
     `SELECT id, full_name, email, phone, specialty, subspecialty,
      license_number, licensing_authority, license_expiry_date,
-     years_of_experience, current_workplace, status
+     years_of_experience, current_workplace, photo_path, status
      FROM doctor_application WHERE id=? LIMIT 1`, [requestId],
   );
   return (rows as DoctorRequestRow[])[0];
@@ -302,14 +304,21 @@ export async function PATCH(
            (id,user_id,application_id,full_name,phone,specialty,subspecialty,
             license_number,licensing_authority,license_expiry_date,
             years_of_experience,current_workplace,supported_imaging_types,
-            supported_body_regions,status)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Active')`,
+            supported_body_regions,photo_path,status)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'Active')`,
           [`DOC-${randomUUID()}`, createdUserId, requestId,
             doctorRequest.full_name, doctorRequest.phone, doctorRequest.specialty,
             doctorRequest.subspecialty, doctorRequest.license_number,
             doctorRequest.licensing_authority, doctorRequest.license_expiry_date,
             doctorRequest.years_of_experience, doctorRequest.current_workplace,
-            JSON.stringify([]), JSON.stringify([])],
+            JSON.stringify([]), JSON.stringify([]),
+            /*
+              The photograph the doctor attached to their application
+              follows them onto their profile, so a doctor who sent one
+              at registration does not have to upload it again on their
+              first day.
+            */
+            doctorRequest.photo_path ?? null],
         );
         await sql.execute(
           `UPDATE doctor_application SET status='Approved',approved_user_id=?,
