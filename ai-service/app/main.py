@@ -2666,13 +2666,29 @@ CLINIC_CAPABILITIES: list[dict[str, Any]] = [
         "slug": "pelvis",
         "name": "Pelvis & Hip Clinic",
         "regions": ["Pelvis & Hip"],
-        "metricsFile": "pelvis_hip_findings/test_metrics.json",
+        # The pelvis clinic is read by btxrd_lesion_all, the model
+        # trained on every BTXRD region, and these are that model
+        # measured on the pelvis test split alone.
+        #
+        # It used to show pelvis_hip_findings instead, which is a
+        # different model and is not the one answering. A doctor was
+        # being handed one model's score for another model's reading.
+        #
+        # The pelvis-only measurement is thirty seven images with six
+        # malignant lesions among them. A number resting on six cases
+        # carries a wide margin, and the clinic says so.
+        "metricsFile": "btxrd_lesion_all/test_metrics_pelvis_only.json",
         "metricsFormat": "auc",
-        "modelFile": (
-            "pelvis_hip_findings/pelvis_hip_findings_model.keras"
+        "modelFile": "btxrd_lesion_all/btxrd_lesion_all_model.keras",
+        "dataset": "BTXRD, every region (measured on the pelvis split)",
+        "trainingImages": 2604,
+        "modelNote": (
+            "This clinic is read by the model trained on all BTXRD "
+            "regions, not by the small pelvis-only model. The scores "
+            "shown were measured on the thirty seven pelvis images of "
+            "the test split, six of which carry a malignant lesion, so "
+            "they carry a wide margin of error."
         ),
-        "dataset": "BTXRD pelvis subset",
-        "trainingImages": 228,
     },
 ]
 
