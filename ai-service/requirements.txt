@@ -1,4 +1,6 @@
 fastapi
+nibabel
 pillow
 python-multipart
+scipy
 uvicorn[standard]
