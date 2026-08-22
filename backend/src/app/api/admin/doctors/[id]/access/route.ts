@@ -136,15 +136,23 @@ export async function PATCH(request: Request, context: RouteContext) {
       A revoked doctor's secretary loses their calendar with them: the
       account exists to manage one doctor's appointments, and that
       doctor no longer has any.
+
+      Only a secretary who was still working is suspended, and only a
+      suspended one is given back. A secretary the administration
+      withdrew on her own account is marked 'Revoked', and restoring her
+      doctor must not quietly reverse that decision: the two were made
+      about different people, for different reasons.
     */
     if (action === "revoke") {
       await sql.execute(
-        "UPDATE secretary_profile SET status = 'Suspended' WHERE doctor_user_id = ?",
+        `UPDATE secretary_profile SET status = 'Suspended'
+         WHERE doctor_user_id = ? AND status = 'Active'`,
         [String(doctor.userId)],
       );
     } else {
       await sql.execute(
-        "UPDATE secretary_profile SET status = 'Active' WHERE doctor_user_id = ?",
+        `UPDATE secretary_profile SET status = 'Active'
+         WHERE doctor_user_id = ? AND status = 'Suspended'`,
         [String(doctor.userId)],
       );
     }

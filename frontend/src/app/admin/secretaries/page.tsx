@@ -1,5 +1,7 @@
 "use client";
 
+import SecretaryAccessButton from "@/components/SecretaryAccessButton";
+
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
@@ -293,6 +295,16 @@ export default function AdminSecretariesPage() {
                     <p className="mt-1 text-sm font-bold text-cyan-200">
                       Works for {secretary.doctorName ?? "a removed doctor"}
                     </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <SecretaryAccessButton
+                      secretaryId={secretary.id}
+                      name={secretary.fullName}
+                      doctorName={secretary.doctorName ?? null}
+                      initialStatus={secretary.status}
+                      onChanged={() => void load()}
+                    />
                   </div>
 
                   {removingId === secretary.id ? (
