@@ -22,6 +22,22 @@ cd "$(dirname "$0")/.." || exit 1
 PYTHON=./.venv/Scripts/python.exe
 PROGRESS=models/progress.log
 
+# Three trainings share sixteen cores. Left alone TensorFlow opens
+# sixteen compute threads in each of them, so forty eight threads fight
+# over the same cores and much of the time goes to switching between
+# them rather than to the convolutions. Five each leaves one core over.
+export TF_NUM_INTRAOP_THREADS=5
+export TF_NUM_INTEROP_THREADS=1
+export OMP_NUM_THREADS=5
+
+# Sixteen epochs rather than thirty, and a shorter wait on a plateau.
+#
+# Neither throws away anything learned: the checkpoint holds the best
+# weights and early stopping restores them, so a lower patience removes
+# only the epochs spent waiting for an improvement that is not coming.
+EPOCHS=16
+PATIENCE=4
+
 log() {
   echo "[$(date '+%m-%d %H:%M')] $*" >> "$PROGRESS"
 }
@@ -40,7 +56,7 @@ run_one() {
   log "start $name"
 
   "$PYTHON" scripts/train_region_3d.py "$region" \
-    --dataset "$dataset" --epochs 30 --resume \
+    --dataset "$dataset" --epochs "$EPOCHS" --patience "$PATIENCE" --resume \
     --output-name "$name" > "$log_file" 2>&1
 
   if [ -f "models/$name/${name}_model.keras" ]; then
