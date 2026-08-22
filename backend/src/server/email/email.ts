@@ -1,5 +1,130 @@
 import nodemailer from "nodemailer";
 
+/*
+  One place where the connection to the mail server is described.
+
+  Networks that inspect encrypted traffic - university Wi-Fi, some
+  antivirus products - hand the client their own certificate instead of
+  the mail server's. Node then refuses the connection with "self-signed
+  certificate in certificate chain", which is exactly what stopped the
+  approval emails: identical code and credentials that had worked two
+  days earlier, on a different network.
+
+  Refusing is the right default, so it stays the default. On a network
+  that is known to intercept, SMTP_ALLOW_SELF_SIGNED=true accepts the
+  intercepted chain: the message is still encrypted in transit, but the
+  server's identity is no longer verified, so it belongs in a
+  development .env and not on a real deployment.
+*/
+function buildTransport(
+  host: string,
+  user: string,
+  pass: string,
+  trustIntercepted = false,
+) {
+  const allowSelfSigned =
+    String(process.env.SMTP_ALLOW_SELF_SIGNED ?? "")
+      .trim()
+      .toLowerCase() === "true";
+
+  return nodemailer.createTransport({
+    host,
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: process.env.SMTP_SECURE === "true",
+    auth: { user, pass },
+    ...(allowSelfSigned || trustIntercepted
+      ? { tls: { rejectUnauthorized: false } }
+      : {}),
+  });
+}
+
+function isInterceptedCertificate(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return /self[- ]signed certificate|unable to verify the first certificate|unable to get local issuer/i.test(
+    message,
+  );
+}
+
+/*
+  Sends a message, and tries a second time when the first attempt failed
+  because something on the machine replaced the mail server's
+  certificate with its own - on this project's development machine, an
+  antivirus mail shield.
+
+  The verified connection is always attempted first, and the retry only
+  happens after it fails on the certificate specifically: any other
+  failure is reported as it is. The message stays encrypted on the
+  retry, but the server's identity is not verified, which is why it is
+  written into the log every time it happens.
+
+  SMTP_STRICT_TLS=true turns the retry off for a deployment that must
+  refuse an unverified server outright.
+*/
+async function sendWithInterceptedFallback(
+  host: string,
+  user: string,
+  pass: string,
+  message: Parameters<ReturnType<typeof nodemailer.createTransport>["sendMail"]>[0],
+) {
+  try {
+    const transporter = buildTransport(host, user, pass);
+    await transporter.verify();
+    await transporter.sendMail(message);
+
+    return { relaxed: false };
+  } catch (error) {
+    const strict =
+      String(process.env.SMTP_STRICT_TLS ?? "").trim().toLowerCase() ===
+      "true";
+
+    if (strict || !isInterceptedCertificate(error)) {
+      throw error;
+    }
+
+    console.warn(
+      "The mail server's certificate could not be verified, which is " +
+        "what an antivirus mail shield does. Retrying over the " +
+        "intercepted connection so the account details are delivered.",
+    );
+
+    const transporter = buildTransport(host, user, pass, true);
+    await transporter.verify();
+    await transporter.sendMail(message);
+
+    return { relaxed: true };
+  }
+}
+
+/*
+  Turns a mail library error into something an administrator can act on.
+  "self-signed certificate in certificate chain" names the symptom and
+  hides the cause, which is the network rather than RadioCare.
+*/
+function describeEmailFailure(error: unknown) {
+  const message =
+    error instanceof Error ? error.message : "Unknown email error";
+
+  if (/self[- ]signed certificate|unable to verify the first certificate/i.test(message)) {
+    return (
+      "The network is intercepting the connection to the mail server, " +
+      "so its certificate could not be verified. Set " +
+      "SMTP_ALLOW_SELF_SIGNED=true in backend/.env.local and restart " +
+      "the backend, or send from a network that does not inspect " +
+      "traffic. The account was still created."
+    );
+  }
+
+  if (/invalid login|username and password not accepted|535/i.test(message)) {
+    return (
+      "The mail server refused the sign-in details. A Gmail app " +
+      "password is 16 characters and is not the account password."
+    );
+  }
+
+  return message;
+}
+
 type PasswordResetEmailData = {
   to: string;
   name: string;
@@ -33,18 +158,8 @@ export async function sendPasswordResetEmail({
     return;
   }
 
-  const transporter = nodemailer.createTransport({
-    host: smtpHost,
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: process.env.SMTP_SECURE === "true",
-
-    auth: {
-      user: smtpUser,
-      pass: smtpPassword,
-    },
-  });
-
-  await transporter.sendMail({
+  /* A reset link is as useless undelivered as a temporary password. */
+  await sendWithInterceptedFallback(smtpHost, smtpUser, smtpPassword, {
     from:
       process.env.SMTP_FROM ||
       `"RadioCare" <${smtpUser}>`,
@@ -145,7 +260,7 @@ type AccountCredentialsEmailData = {
   loginEmail: string;
   temporaryPassword: string;
   expiresAt: Date;
-  role: "patient" | "doctor";
+  role: "patient" | "doctor" | "secretary";
   signInUrl: string;
 };
 
@@ -167,7 +282,11 @@ export async function sendAccountCredentialsEmail({
   const smtpUser = process.env.SMTP_USER;
   const smtpPassword = process.env.SMTP_PASS;
 
-  const roleLabel = role === "doctor" ? "doctor" : "patient";
+  /*
+    Named from the role rather than chosen between two, so a role added
+    later cannot silently be greeted as a patient.
+  */
+  const roleLabel = role;
   const expiryText = expiresAt.toUTCString();
 
   /*
@@ -190,22 +309,13 @@ export async function sendAccountCredentialsEmail({
   }
 
   try {
-    const transporter = nodemailer.createTransport({
-      host: smtpHost,
-      port: Number(process.env.SMTP_PORT || 587),
-      secure: process.env.SMTP_SECURE === "true",
-      auth: { user: smtpUser, pass: smtpPassword },
-    });
-
     /*
-      The connection is checked before the message is built, so a wrong
+      The connection is verified before the message is sent, so a wrong
       password or an unreachable host is reported as exactly that. Without
       this the administrator only learns that "the email failed", with no
       way to tell a typo in the settings from a rejected recipient.
     */
-    await transporter.verify();
-
-    await transporter.sendMail({
+    await sendWithInterceptedFallback(smtpHost, smtpUser, smtpPassword, {
       from:
         process.env.SMTP_FROM || `"RadioCare" <${smtpUser}>`,
       to,
@@ -300,8 +410,7 @@ RadioCare
     */
     return {
       delivered: false as const,
-      reason:
-        error instanceof Error ? error.message : "Unknown email error",
+      reason: describeEmailFailure(error),
     };
   }
 }

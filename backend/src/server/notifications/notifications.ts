@@ -41,6 +41,8 @@ export type NotificationType =
   | "appointment_completed"
   | "appointment_reminder"
   | "chat_message"
+  /* A message between a doctor or a patient and the administration. */
+  | "support_message"
   | "new_case"
   | "registration_request"
   /* An account change made by an admin, such as new clinics. */

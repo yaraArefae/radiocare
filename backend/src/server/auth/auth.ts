@@ -3,7 +3,7 @@ import {
   APIError,
   createAuthMiddleware,
 } from "better-auth/api";
-import { admin as adminPlugin } from "better-auth/plugins";
+import { admin as adminPlugin, bearer } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
 
 import {
@@ -67,6 +67,38 @@ export const auth = betterAuth({
     "http://localhost:3000",
 
   secret: process.env.BETTER_AUTH_SECRET,
+
+  /*
+    Which origins may sign in.
+
+    The library refuses a request whose Origin it does not recognise,
+    which is what stops another website from signing your users in
+    behind their back. The website itself is covered by baseURL; the
+    mobile application needs naming because it is served from its own
+    development port, and from the phone's own address when it runs on a
+    handset.
+
+    A native app sends no Origin at all, so it never reaches this check
+    - only the browser preview does.
+  */
+  trustedOrigins: [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    /* Expo's development server, and the next ports it falls back to. */
+    "http://localhost:8081",
+    "http://localhost:8082",
+    "http://localhost:8090",
+    "http://127.0.0.1:8090",
+    /* The same bundle opened from a phone on the local network. */
+    "http://192.168.4.47:8090",
+    /*
+      The mobile application running on a phone. A native app has no web
+      origin of its own, and the library refuses a request that carries
+      none at all, so the app names itself with its own scheme - the one
+      registered in app.json - and it is trusted here.
+    */
+    "radiocare://",
+  ],
 
   /*
     قاعدة بيانات SQLite.
@@ -213,6 +245,24 @@ export const auth = betterAuth({
       defaultRole: "patient",
       adminRoles: ["admin"],
     }),
+
+    /*
+      Lets a caller carry its session as a bearer token instead of a
+      cookie.
+
+      The website has no use for this: a browser stores the cookie and
+      sends it back on its own. A phone cannot. iOS manages cookies
+      inside its own networking layer and ignores a Cookie header the
+      application sets by hand, so the session was created correctly and
+      then never presented again - the sign-in worked and the very next
+      request came back with no user.
+
+      With this plugin the same session can also be presented as
+      "Authorization: Bearer <token>", which is a header nothing
+      intercepts. Nothing about the cookie path changes, so the website
+      keeps working exactly as before.
+    */
+    bearer(),
 
     /*
       يجب أن يبقى آخر Plugin.

@@ -78,7 +78,7 @@ export async function deliverCredentials(options: {
   loginEmail: string;
   temporaryPassword: string;
   expiresAt: Date;
-  role: "patient" | "doctor";
+  role: "patient" | "doctor" | "secretary";
 }) {
   const signInUrl =
     process.env.APP_PUBLIC_URL?.replace(/\/$/, "") ||
