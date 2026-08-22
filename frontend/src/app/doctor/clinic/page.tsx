@@ -27,6 +27,15 @@ const clinics = [
     imageTypes: ["Brain MRI", "Head MRA", "Skull"],
   },
   {
+    slug: "abdomen",
+    name: "Abdomen Clinic",
+    specialty: "Abdominal Radiology",
+    description:
+      "Review liver, kidney, pancreas, colon and adrenal CT volumes.",
+    icon: "🫀",
+    imageTypes: ["Abdomen CT", "Pancreas CT", "Colon CT", "Liver CT"],
+  },
+  {
     slug: "chest",
     name: "Chest Clinic",
     specialty: "Pulmonology & Chest Imaging",
@@ -195,6 +204,16 @@ function DoctorClinicsContent() {
   if (isLoadingClinics || onlyClinic) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#06142f] via-[#0a2450] to-[#071a38]">
+        {/*
+          A doctor with one clinic is forwarded straight into it and
+          never reaches the list below, so the gate has to run on this
+          branch as well. It was only on the other one, which meant
+          every single clinic doctor - which is most of them - signed in
+          on the password an administrator issued and was never asked to
+          replace it.
+        */}
+        <PasswordChangeGate />
+
         <div className="text-center">
           <div className="mx-auto h-14 w-14 animate-spin rounded-full border-4 border-cyan-300/20 border-t-cyan-300" />
 

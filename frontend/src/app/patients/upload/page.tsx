@@ -315,7 +315,7 @@ const REGION_CONFIG: Record<BodyRegion, RegionConfig> = {
     endpoint: "/predict/volume/abdomen-ct-colon",
     bodyRegionCode: "ABDOMEN",
     imagingView: "Colon CT",
-    clinicSlug: "general",
+    clinicSlug: "abdomen",
     clinicName: "General Clinic",
     clinicalNotes:
       "Colon CT uploaded by the patient for preliminary AI analysis of a cancer.",
@@ -328,7 +328,7 @@ const REGION_CONFIG: Record<BodyRegion, RegionConfig> = {
     endpoint: "/predict/volume/abdomen-ct-liver-vessels",
     bodyRegionCode: "ABDOMEN",
     imagingView: "Liver Vessels CT",
-    clinicSlug: "general",
+    clinicSlug: "abdomen",
     clinicName: "General Clinic",
     clinicalNotes:
       "Liver vessel CT uploaded by the patient for preliminary AI analysis.",
@@ -341,7 +341,7 @@ const REGION_CONFIG: Record<BodyRegion, RegionConfig> = {
     endpoint: "/predict/volume/abdomen-ct-pancreas",
     bodyRegionCode: "ABDOMEN",
     imagingView: "Pancreas CT",
-    clinicSlug: "general",
+    clinicSlug: "abdomen",
     clinicName: "General Clinic",
     clinicalNotes:
       "Pancreas CT uploaded by the patient for preliminary AI analysis of a tumour.",
@@ -354,7 +354,7 @@ const REGION_CONFIG: Record<BodyRegion, RegionConfig> = {
     endpoint: "/predict/volume/abdomen-ct-liver",
     bodyRegionCode: "ABDOMEN",
     imagingView: "Liver CT",
-    clinicSlug: "general",
+    clinicSlug: "abdomen",
     clinicName: "General Clinic",
     clinicalNotes:
       "Liver CT uploaded by the patient for preliminary AI analysis of a tumour.",
@@ -367,7 +367,7 @@ const REGION_CONFIG: Record<BodyRegion, RegionConfig> = {
     endpoint: "/predict/volume/abdomen-ct-kidney",
     bodyRegionCode: "ABDOMEN",
     imagingView: "Kidney CT",
-    clinicSlug: "general",
+    clinicSlug: "abdomen",
     clinicName: "General Clinic",
     clinicalNotes:
       "Kidney CT uploaded by the patient for preliminary AI analysis of a tumour.",

@@ -3673,9 +3673,17 @@ VOLUME_MODEL_REGISTRY: dict[str, dict[str, Any]] = {
     "abdomen-ct": {
         "displayName": "Abdomen CT",
         "bodyRegion": "ABDOMEN",
-        "clinic": "general",
+        "clinic": "abdomen",
         "modality": "CT",
-        "folder": "abdomen_3d_adrenal3d",
+        # The 64 cubed model, measured against the 28 cubed one on the
+        # same sixty nine positives: 0.934 against 0.888.
+        #
+        # Resolution is not a free win and was not assumed. The same
+        # step made the lung nodule worse (0.908 -> 0.826) and the head
+        # vessels worse still (0.946 -> 0.828), so those two keep their
+        # smaller models. Each pair was measured before anything was
+        # swapped.
+        "folder": "abdomen_3d_adrenal3d_64",
         "acceptsRawScan": False,
         "window": (-150.0, 250.0),
         # Checked against the prepared volumes: they hold two values,
@@ -3761,7 +3769,7 @@ VOLUME_MODEL_REGISTRY: dict[str, dict[str, Any]] = {
     "abdomen-ct-colon": {
         "displayName": "Colon CT",
         "bodyRegion": "ABDOMEN",
-        "clinic": "general",
+        "clinic": "abdomen",
         "modality": "CT",
         "folder": "abdomen_3d_colon_tumour",
         "window": (-150.0, 250.0),
@@ -3773,7 +3781,7 @@ VOLUME_MODEL_REGISTRY: dict[str, dict[str, Any]] = {
     "abdomen-ct-liver-vessels": {
         "displayName": "Liver Vessels CT",
         "bodyRegion": "ABDOMEN",
-        "clinic": "general",
+        "clinic": "abdomen",
         "modality": "CT",
         "folder": "abdomen_3d_hepatic_vessel_tumour",
         "window": (-150.0, 250.0),
@@ -3785,7 +3793,7 @@ VOLUME_MODEL_REGISTRY: dict[str, dict[str, Any]] = {
     "abdomen-ct-pancreas": {
         "displayName": "Pancreas CT",
         "bodyRegion": "ABDOMEN",
-        "clinic": "general",
+        "clinic": "abdomen",
         "modality": "CT",
         "folder": "abdomen_3d_pancreas_tumour",
         "window": (-150.0, 250.0),
@@ -3797,7 +3805,7 @@ VOLUME_MODEL_REGISTRY: dict[str, dict[str, Any]] = {
     "abdomen-ct-liver": {
         "displayName": "Liver CT",
         "bodyRegion": "ABDOMEN",
-        "clinic": "general",
+        "clinic": "abdomen",
         "modality": "CT",
         "folder": "abdomen_3d_liver_tumour",
         "window": (-150.0, 250.0),
@@ -3816,7 +3824,7 @@ VOLUME_MODEL_REGISTRY: dict[str, dict[str, Any]] = {
     "abdomen-ct-kidney": {
         "displayName": "Kidney CT",
         "bodyRegion": "ABDOMEN",
-        "clinic": "general",
+        "clinic": "abdomen",
         "modality": "CT",
         "folder": "abdomen_3d_kidney_tumour",
         "window": (-150.0, 250.0),

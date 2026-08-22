@@ -18,6 +18,7 @@ export type ClinicKey =
   | "pelvis"
   | "lower-limb"
   | "head"
+  | "abdomen"
   | "general";
 
 export type ClinicDefinition = {
@@ -155,6 +156,38 @@ export const CLINIC_DEFINITIONS: ClinicDefinition[] = [
     ],
   },
   {
+    key: "abdomen",
+    name: "Abdomen Clinic",
+    specialty: "Abdominal Radiology",
+    description:
+      "Liver, kidney, pancreas, colon and adrenal studies, read as CT " +
+      "volumes.",
+    patientRegions: ["Abdomen"],
+    /*
+      The organ names matter as much as the word "abdomen". A study
+      arrives described as a pancreas CT far more often than as an
+      abdominal one, and before this clinic existed every one of them
+      fell through to the general bucket.
+    */
+    keywords: [
+      "abdomen",
+      "abdominal",
+      "liver",
+      "hepatic",
+      "kidney",
+      "renal",
+      "pancreas",
+      "pancreatic",
+      "colon",
+      "colorectal",
+      "bowel",
+      "adrenal",
+      "spleen",
+      "splenic",
+      "gastro",
+    ],
+  },
+  {
     key: "general",
     name: "General Clinic",
     specialty: "General Radiology",
@@ -215,6 +248,13 @@ const RETIRED_CLINIC_KEYS: Record<string, ClinicKey[]> = {
     head study, only a less specific one.
   */
   neuro: ["head"],
+
+  /*
+    An abdominal radiologist reads the organ clinics rather than one
+    named after a bone.
+  */
+  abdominal: ["abdomen"],
+  gastro: ["abdomen"],
   dental: [],
 };
 
