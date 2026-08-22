@@ -1,0 +1,8 @@
+{
+  "colon_tumour": {
+    "threshold": 0.594844,
+    "roc_auc": 0.9138,
+    "average_precision": 0.9016,
+    "test_positive_count": 192
+  }
+}

@@ -1,0 +1,8 @@
+                          precision    recall  f1-score   support
+
+no intracranial_aneurysm       0.97      0.94      0.95       339
+   intracranial_aneurysm       0.61      0.79      0.69        43
+
+                accuracy                           0.92       382
+               macro avg       0.79      0.86      0.82       382
+            weighted avg       0.93      0.92      0.92       382

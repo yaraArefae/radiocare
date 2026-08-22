@@ -1,0 +1,39 @@
+{
+  "labels": [
+    "organ_liver",
+    "organ_kidney_right",
+    "organ_kidney_left",
+    "organ_femur_right",
+    "organ_femur_left",
+    "organ_bladder",
+    "organ_heart",
+    "organ_lung_right",
+    "organ_lung_left",
+    "organ_spleen",
+    "organ_pancreas"
+  ],
+  "thresholds": {
+    "organ_liver": 0.95,
+    "organ_kidney_right": 0.8713561296463013,
+    "organ_kidney_left": 0.95,
+    "organ_femur_right": 0.95,
+    "organ_femur_left": 0.95,
+    "organ_bladder": 0.95,
+    "organ_heart": 0.9241238236427307,
+    "organ_lung_right": 0.05,
+    "organ_lung_left": 0.95,
+    "organ_spleen": 0.95,
+    "organ_pancreas": 0.95
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    28,
+    28,
+    28
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "medmnist3d/organmnist3d"
+}

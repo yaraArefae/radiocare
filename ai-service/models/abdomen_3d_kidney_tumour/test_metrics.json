@@ -1,0 +1,8 @@
+{
+  "kidney_tumour": {
+    "threshold": 0.825913,
+    "roc_auc": 0.8913,
+    "average_precision": 0.8582,
+    "test_positive_count": 112
+  }
+}

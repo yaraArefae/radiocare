@@ -1,0 +1,23 @@
+{
+  "labels": [
+    "colon_tumour"
+  ],
+  "thresholds": {
+    "colon_tumour": 0.5948437452316284
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    64,
+    64,
+    64
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "MSD Task10_Colon",
+  "huWindow": [
+    -150.0,
+    250.0
+  ]
+}

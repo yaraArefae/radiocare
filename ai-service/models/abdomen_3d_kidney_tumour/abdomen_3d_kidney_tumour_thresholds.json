@@ -1,0 +1,19 @@
+{
+  "labels": [
+    "kidney_tumour"
+  ],
+  "thresholds": {
+    "kidney_tumour": 0.8259127736091614
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    64,
+    64,
+    64
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "M3D-Seg 0005"
+}

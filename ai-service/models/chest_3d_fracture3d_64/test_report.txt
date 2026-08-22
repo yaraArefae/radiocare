@@ -1,0 +1,10 @@
+                           precision    recall  f1-score   support
+
+      buckle_rib_fracture       0.43      0.90      0.58        90
+nondisplaced_rib_fracture       0.50      0.80      0.62       104
+   displaced_rib_fracture       0.53      0.74      0.62        46
+
+                micro avg       0.47      0.82      0.60       240
+                macro avg       0.49      0.81      0.61       240
+             weighted avg       0.48      0.82      0.60       240
+              samples avg       0.51      0.82      0.61       240

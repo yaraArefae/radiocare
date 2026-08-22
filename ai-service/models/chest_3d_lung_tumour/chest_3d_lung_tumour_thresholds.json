@@ -1,0 +1,23 @@
+{
+  "labels": [
+    "lung_tumour"
+  ],
+  "thresholds": {
+    "lung_tumour": 0.07090191543102264
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    64,
+    64,
+    64
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "MSD Task06_Lung",
+  "huWindow": [
+    -1000.0,
+    400.0
+  ]
+}

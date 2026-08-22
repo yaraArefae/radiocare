@@ -1,0 +1,8 @@
+{
+  "enhancing_brain_tumour": {
+    "threshold": 0.072231,
+    "roc_auc": 0.986,
+    "average_precision": 0.9885,
+    "test_positive_count": 376
+  }
+}

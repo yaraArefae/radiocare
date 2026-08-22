@@ -1,0 +1,8 @@
+                 precision    recall  f1-score   support
+
+no liver_tumour       0.57      0.88      0.69        32
+   liver_tumour       0.73      0.34      0.47        32
+
+       accuracy                           0.61        64
+      macro avg       0.65      0.61      0.58        64
+   weighted avg       0.65      0.61      0.58        64

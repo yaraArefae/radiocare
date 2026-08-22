@@ -1,0 +1,20 @@
+{
+  "buckle_rib_fracture": {
+    "threshold": 0.315181,
+    "roc_auc": 0.7224,
+    "average_precision": 0.6544,
+    "test_positive_count": 90
+  },
+  "nondisplaced_rib_fracture": {
+    "threshold": 0.394291,
+    "roc_auc": 0.6961,
+    "average_precision": 0.6156,
+    "test_positive_count": 104
+  },
+  "displaced_rib_fracture": {
+    "threshold": 0.677349,
+    "roc_auc": 0.8622,
+    "average_precision": 0.6744,
+    "test_positive_count": 46
+  }
+}

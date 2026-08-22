@@ -1,0 +1,8 @@
+                           precision    recall  f1-score   support
+
+no enhancing_brain_tumour       0.95      0.94      0.95       384
+   enhancing_brain_tumour       0.94      0.95      0.95       376
+
+                 accuracy                           0.95       760
+                macro avg       0.95      0.95      0.95       760
+             weighted avg       0.95      0.95      0.95       760

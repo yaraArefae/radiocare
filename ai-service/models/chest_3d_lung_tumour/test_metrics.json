@@ -1,0 +1,8 @@
+{
+  "lung_tumour": {
+    "threshold": 0.070902,
+    "roc_auc": 0.9788,
+    "average_precision": 0.975,
+    "test_positive_count": 96
+  }
+}

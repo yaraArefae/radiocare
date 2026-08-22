@@ -1,0 +1,19 @@
+{
+  "labels": [
+    "liver_tumour"
+  ],
+  "thresholds": {
+    "liver_tumour": 0.5472738146781921
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    64,
+    64,
+    64
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "M3D-Seg 0009"
+}

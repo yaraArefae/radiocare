@@ -1,0 +1,23 @@
+{
+  "labels": [
+    "buckle_rib_fracture",
+    "nondisplaced_rib_fracture",
+    "displaced_rib_fracture"
+  ],
+  "thresholds": {
+    "buckle_rib_fracture": 0.31518128514289856,
+    "nondisplaced_rib_fracture": 0.3942906856536865,
+    "displaced_rib_fracture": 0.6773489713668823
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    64,
+    64,
+    64
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "medmnist3d/fracturemnist3d_64"
+}

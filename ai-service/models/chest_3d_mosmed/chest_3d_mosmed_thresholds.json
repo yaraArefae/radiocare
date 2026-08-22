@@ -1,0 +1,30 @@
+{
+  "labels": [
+    "lung_involvement"
+  ],
+  "thresholds": {
+    "lung_involvement": 0.4452454447746277
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    64,
+    64,
+    64
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "https://github.com/hasibzunair/3D-image-classification-tutorial/releases/download/v0.2/CT-0.zip",
+  "huWindow": [
+    -1000.0,
+    400.0
+  ],
+  "thresholdRule": {
+    "chosenBy": "minimum recall on the validation split",
+    "minRecall": {
+      "lung_involvement": 0.9
+    },
+    "replaces": "best F1, which training picks by default"
+  }
+}

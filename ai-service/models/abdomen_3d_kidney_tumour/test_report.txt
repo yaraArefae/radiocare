@@ -1,0 +1,8 @@
+                  precision    recall  f1-score   support
+
+no kidney_tumour       0.85      0.84      0.85       112
+   kidney_tumour       0.84      0.86      0.85       112
+
+        accuracy                           0.85       224
+       macro avg       0.85      0.85      0.85       224
+    weighted avg       0.85      0.85      0.85       224

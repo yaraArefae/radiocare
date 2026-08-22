@@ -1,0 +1,19 @@
+{
+  "labels": [
+    "enhancing_brain_tumour"
+  ],
+  "thresholds": {
+    "enhancing_brain_tumour": 0.07223059982061386
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    64,
+    64,
+    64
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "MSD Task01_BrainTumour"
+}

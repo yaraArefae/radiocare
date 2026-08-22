@@ -1,0 +1,8 @@
+{
+  "liver_tumour": {
+    "threshold": 0.547274,
+    "roc_auc": 0.6094,
+    "average_precision": 0.5895,
+    "test_positive_count": 32
+  }
+}

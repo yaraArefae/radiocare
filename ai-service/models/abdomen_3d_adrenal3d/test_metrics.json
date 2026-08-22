@@ -1,0 +1,8 @@
+{
+  "adrenal_mass": {
+    "threshold": 0.688195,
+    "roc_auc": 0.8883,
+    "average_precision": 0.7007,
+    "test_positive_count": 69
+  }
+}

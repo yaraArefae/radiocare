@@ -1,0 +1,8 @@
+{
+  "intracranial_aneurysm": {
+    "threshold": 0.854994,
+    "roc_auc": 0.9463,
+    "average_precision": 0.7119,
+    "test_positive_count": 43
+  }
+}

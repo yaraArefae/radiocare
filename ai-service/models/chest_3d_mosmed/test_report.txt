@@ -1,0 +1,8 @@
+                     precision    recall  f1-score   support
+
+no lung_involvement       0.70      0.47      0.56        15
+   lung_involvement       0.60      0.80      0.69        15
+
+           accuracy                           0.63        30
+          macro avg       0.65      0.63      0.62        30
+       weighted avg       0.65      0.63      0.62        30

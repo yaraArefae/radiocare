@@ -1,0 +1,19 @@
+{
+  "labels": [
+    "intracranial_aneurysm"
+  ],
+  "thresholds": {
+    "intracranial_aneurysm": 0.8549938797950745
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    28,
+    28,
+    28
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "medmnist3d/vesselmnist3d"
+}
