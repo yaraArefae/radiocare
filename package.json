@@ -15,6 +15,9 @@
     "db:up": "node scripts/db-up.mjs",
     "build": "npm run build --workspace backend && npm run build --workspace frontend",
     "typecheck": "npm run typecheck --workspace backend && npm run typecheck --workspace frontend",
-    "lint": "npm run lint --workspace frontend"
+    "lint": "npm run lint --workspace frontend",
+    "dev:ai:lan": "ai-service\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --reload-dir ai-service/app --host 0.0.0.0 --port 8001 --app-dir ai-service",
+    "dev:mobile": "npm run start --prefix mobile",
+    "dev:everything": "node scripts/dev.mjs --with-ai --with-mobile --lan"
   }
 }

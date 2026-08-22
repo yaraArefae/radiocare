@@ -69,11 +69,24 @@ console.log(`User      ${user}`);
 console.log(`Recipient ${recipient}`);
 console.log("");
 
+/*
+  The same escape hatch the application uses, so this script fails and
+  succeeds under exactly the conditions the approval email does.
+*/
+const allowSelfSigned =
+  String(process.env.SMTP_ALLOW_SELF_SIGNED ?? "").trim().toLowerCase() ===
+  "true";
+
+if (allowSelfSigned) {
+  console.log("TLS: accepting an intercepted certificate chain.");
+}
+
 const transporter = nodemailer.createTransport({
   host,
   port,
   secure,
   auth: { user, pass },
+  ...(allowSelfSigned ? { tls: { rejectUnauthorized: false } } : {}),
 });
 
 try {

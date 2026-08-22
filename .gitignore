@@ -63,3 +63,11 @@ yarn-error.log*
 # this size, so they cannot live here. ai-service/scripts/prepare_*.py
 # rebuilds every one of them from its original download; see the README.
 ai-service/data/
+
+# ---- Written while a model trains ---------------------------------------
+# The weights and the metrics are kept, because a clone should run without
+# retraining. These are the noise around them: one log per run, the queue's
+# own progress file, and a copy of a model taken before it was retrained.
+ai-service/models/*_train.log
+ai-service/models/progress.log
+ai-service/models/_backup_*/

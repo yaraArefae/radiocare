@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { connect } from "node:net";
+import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const isWindows = process.platform === "win32";
@@ -44,7 +45,39 @@ function isPortInUse(port) {
 }
 
 const withAi = process.argv.includes("--with-ai");
-const requiredPorts = withAi ? [3000, 4000, 8001] : [3000, 4000];
+const withMobile = process.argv.includes("--with-mobile");
+
+/*
+  On the local network the services have to answer the phone as well as
+  the laptop, which means binding to every interface instead of only to
+  localhost. The website does not care either way, so this only changes
+  what the AI service and Expo listen on.
+*/
+const overLan = process.argv.includes("--lan");
+
+/* The address the phone would use, printed at the end so it is not guessed. */
+function localNetworkAddress() {
+  for (const addresses of Object.values(networkInterfaces())) {
+    for (const address of addresses ?? []) {
+      if (
+        address.family === "IPv4" &&
+        !address.internal &&
+        !address.address.startsWith("169.254.") &&
+        !address.address.startsWith("172.")
+      ) {
+        return address.address;
+      }
+    }
+  }
+
+  return "localhost";
+}
+
+const requiredPorts = [3000, 4000];
+
+if (withAi) requiredPorts.push(8001);
+if (withMobile) requiredPorts.push(8090);
+
 const occupiedPorts = [];
 
 for (const port of requiredPorts) {
@@ -61,8 +94,13 @@ if (occupiedPorts.length > 0) {
   process.exit(1);
 }
 
+/*
+  The backend answers on 4000 and nowhere else: that address is compiled
+  into the website and into the mobile application, so starting it on
+  another port produces a system whose parts cannot find each other.
+*/
 const services = [
-  spawn(npmCommand, npmArguments("backend", "--port 4001"), {
+  spawn(npmCommand, npmArguments("backend"), {
     stdio: "inherit",
   }),
   spawn(npmCommand, npmArguments("frontend"), {
@@ -93,6 +131,8 @@ if (withAi) {
         "--reload",
         "--reload-dir",
         "app",
+        "--host",
+        overLan ? "0.0.0.0" : "127.0.0.1",
         "--port",
         "8001",
       ],
@@ -103,6 +143,46 @@ if (withAi) {
     ),
   );
 }
+
+if (withMobile) {
+  const mobileDirectory = fileURLToPath(new URL("../mobile/", import.meta.url));
+
+  const expoCommand = `npx expo start --port 8090${overLan ? " --lan" : ""}`;
+
+  services.push(
+    spawn(
+      npmCommand,
+      isWindows
+        ? ["/d", "/s", "/c", expoCommand]
+        : ["-c", expoCommand],
+      {
+        cwd: mobileDirectory,
+        stdio: "inherit",
+        shell: !isWindows,
+      },
+    ),
+  );
+}
+
+const address = overLan ? localNetworkAddress() : "localhost";
+
+console.log("\n──────────────────────────────────────────────");
+console.log("  RadioCare is starting");
+console.log("──────────────────────────────────────────────");
+console.log(`  Website        http://${address}:3000`);
+console.log(`  Backend API    http://${address}:4000`);
+
+if (withAi) console.log(`  AI service     http://${address}:8001`);
+
+if (withMobile) {
+  console.log(`  Mobile (web)   http://localhost:8090`);
+
+  if (overLan) {
+    console.log(`  Mobile (phone) exp://${address}:8090`);
+  }
+}
+
+console.log("──────────────────────────────────────────────\n");
 
 let stopping = false;
 
