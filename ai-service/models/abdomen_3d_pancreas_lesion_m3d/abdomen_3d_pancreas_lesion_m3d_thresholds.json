@@ -1,0 +1,19 @@
+{
+  "labels": [
+    "pancreas_lesion"
+  ],
+  "thresholds": {
+    "pancreas_lesion": 0.3483620882034302
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    64,
+    64,
+    64
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "M3D-Seg 0017"
+}

@@ -1,0 +1,8 @@
+{
+  "hepatic_vessel_tumour": {
+    "threshold": 0.193469,
+    "roc_auc": 0.9399,
+    "average_precision": 0.9068,
+    "test_positive_count": 480
+  }
+}

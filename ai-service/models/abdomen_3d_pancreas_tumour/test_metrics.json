@@ -1,0 +1,8 @@
+{
+  "pancreas_tumour": {
+    "threshold": 0.684004,
+    "roc_auc": 0.9735,
+    "average_precision": 0.9679,
+    "test_positive_count": 448
+  }
+}

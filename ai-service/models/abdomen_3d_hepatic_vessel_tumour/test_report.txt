@@ -1,0 +1,8 @@
+                          precision    recall  f1-score   support
+
+no hepatic_vessel_tumour       0.95      0.83      0.88       480
+   hepatic_vessel_tumour       0.85      0.95      0.90       480
+
+                accuracy                           0.89       960
+               macro avg       0.90      0.89      0.89       960
+            weighted avg       0.90      0.89      0.89       960

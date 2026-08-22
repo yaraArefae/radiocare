@@ -1,0 +1,19 @@
+{
+  "labels": [
+    "malignant_nodule"
+  ],
+  "thresholds": {
+    "malignant_nodule": 0.20600645244121552
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    64,
+    64,
+    64
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "medmnist3d/nodulemnist3d_64"
+}

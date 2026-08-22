@@ -1,0 +1,26 @@
+{
+  "organ_heart": {
+    "threshold": 0.05,
+    "roc_auc": 0.8627,
+    "average_precision": 0.2157,
+    "test_positive_count": 3
+  },
+  "organ_hippocampus": {
+    "threshold": 0.95,
+    "roc_auc": 0.8,
+    "average_precision": 0.8097,
+    "test_positive_count": 39
+  },
+  "organ_prostate": {
+    "threshold": 0.05,
+    "roc_auc": 0.7959,
+    "average_precision": 0.2215,
+    "test_positive_count": 5
+  },
+  "organ_spleen": {
+    "threshold": 0.059573,
+    "roc_auc": 1.0,
+    "average_precision": 1.0,
+    "test_positive_count": 7
+  }
+}

@@ -1,0 +1,8 @@
+                    precision    recall  f1-score   support
+
+no pancreas_lesion       0.97      0.91      0.94       128
+   pancreas_lesion       0.72      0.91      0.81        32
+
+          accuracy                           0.91       160
+         macro avg       0.85      0.91      0.87       160
+      weighted avg       0.93      0.91      0.92       160

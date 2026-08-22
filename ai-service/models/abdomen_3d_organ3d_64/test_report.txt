@@ -1,0 +1,18 @@
+                    precision    recall  f1-score   support
+
+       organ_liver       0.98      0.94      0.96        69
+organ_kidney_right       0.53      0.62      0.57        68
+ organ_kidney_left       0.53      0.74      0.61        69
+ organ_femur_right       0.58      0.75      0.65        65
+  organ_femur_left       0.65      0.72      0.69        65
+     organ_bladder       0.60      0.83      0.70        66
+       organ_heart       1.00      0.86      0.92        28
+  organ_lung_right       1.00      0.95      0.98        21
+   organ_lung_left       1.00      1.00      1.00        21
+      organ_spleen       0.93      0.72      0.81        69
+    organ_pancreas       0.94      0.90      0.92        69
+
+         micro avg       0.72      0.80      0.76       610
+         macro avg       0.79      0.82      0.80       610
+      weighted avg       0.75      0.80      0.77       610
+       samples avg       0.69      0.80      0.73       610

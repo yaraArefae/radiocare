@@ -1,0 +1,19 @@
+{
+  "labels": [
+    "adrenal_mass"
+  ],
+  "thresholds": {
+    "adrenal_mass": 0.8816446661949158
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    64,
+    64,
+    64
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "medmnist3d/adrenalmnist3d_64"
+}

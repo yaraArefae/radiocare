@@ -1,0 +1,23 @@
+{
+  "labels": [
+    "pancreas_tumour"
+  ],
+  "thresholds": {
+    "pancreas_tumour": 0.6840035915374756
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    64,
+    64,
+    64
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "MSD Task07_Pancreas",
+  "huWindow": [
+    -150.0,
+    250.0
+  ]
+}

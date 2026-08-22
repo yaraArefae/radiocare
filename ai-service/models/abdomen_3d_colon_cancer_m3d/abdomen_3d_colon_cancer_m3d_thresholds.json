@@ -1,0 +1,19 @@
+{
+  "labels": [
+    "colon_cancer"
+  ],
+  "thresholds": {
+    "colon_cancer": 0.3957824409008026
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    64,
+    64,
+    64
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "M3D-Seg 0018"
+}

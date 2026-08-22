@@ -1,0 +1,25 @@
+{
+  "labels": [
+    "organ_heart",
+    "organ_hippocampus",
+    "organ_prostate",
+    "organ_spleen"
+  ],
+  "thresholds": {
+    "organ_heart": 0.05,
+    "organ_hippocampus": 0.95,
+    "organ_prostate": 0.05,
+    "organ_spleen": 0.05957295373082161
+  },
+  "inputKind": "volume",
+  "volumeShape": [
+    64,
+    64,
+    64
+  ],
+  "valueRange": [
+    0,
+    255
+  ],
+  "dataset": "https://msd-for-monai.s3-us-west-2.amazonaws.com"
+}

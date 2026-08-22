@@ -1,0 +1,8 @@
+                 precision    recall  f1-score   support
+
+no colon_cancer       0.88      0.62      0.73       192
+   colon_cancer       0.71      0.92      0.80       192
+
+       accuracy                           0.77       384
+      macro avg       0.80      0.77      0.77       384
+   weighted avg       0.80      0.77      0.77       384

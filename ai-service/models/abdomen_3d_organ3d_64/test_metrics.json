@@ -1,0 +1,68 @@
+{
+  "organ_liver": {
+    "threshold": 0.95,
+    "roc_auc": 0.9992,
+    "average_precision": 0.9935,
+    "test_positive_count": 69
+  },
+  "organ_kidney_right": {
+    "threshold": 0.922637,
+    "roc_auc": 0.9292,
+    "average_precision": 0.4861,
+    "test_positive_count": 68
+  },
+  "organ_kidney_left": {
+    "threshold": 0.95,
+    "roc_auc": 0.9388,
+    "average_precision": 0.653,
+    "test_positive_count": 69
+  },
+  "organ_femur_right": {
+    "threshold": 0.95,
+    "roc_auc": 0.966,
+    "average_precision": 0.7939,
+    "test_positive_count": 65
+  },
+  "organ_femur_left": {
+    "threshold": 0.95,
+    "roc_auc": 0.9606,
+    "average_precision": 0.8027,
+    "test_positive_count": 65
+  },
+  "organ_bladder": {
+    "threshold": 0.053323,
+    "roc_auc": 0.9644,
+    "average_precision": 0.8265,
+    "test_positive_count": 66
+  },
+  "organ_heart": {
+    "threshold": 0.95,
+    "roc_auc": 0.9998,
+    "average_precision": 0.9965,
+    "test_positive_count": 28
+  },
+  "organ_lung_right": {
+    "threshold": 0.95,
+    "roc_auc": 1.0,
+    "average_precision": 1.0,
+    "test_positive_count": 21
+  },
+  "organ_lung_left": {
+    "threshold": 0.95,
+    "roc_auc": 1.0,
+    "average_precision": 1.0,
+    "test_positive_count": 21
+  },
+  "organ_spleen": {
+    "threshold": 0.937715,
+    "roc_auc": 0.9741,
+    "average_precision": 0.8973,
+    "test_positive_count": 69
+  },
+  "organ_pancreas": {
+    "threshold": 0.412507,
+    "roc_auc": 0.9969,
+    "average_precision": 0.9812,
+    "test_positive_count": 69
+  }
+}

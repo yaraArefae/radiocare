@@ -1,0 +1,8 @@
+{
+  "pancreas_lesion": {
+    "threshold": 0.348362,
+    "roc_auc": 0.9729,
+    "average_precision": 0.9014,
+    "test_positive_count": 32
+  }
+}

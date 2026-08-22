@@ -1,0 +1,8 @@
+                 precision    recall  f1-score   support
+
+no adrenal_mass       0.87      0.97      0.92       229
+   adrenal_mass       0.82      0.52      0.64        69
+
+       accuracy                           0.86       298
+      macro avg       0.84      0.74      0.78       298
+   weighted avg       0.86      0.86      0.85       298

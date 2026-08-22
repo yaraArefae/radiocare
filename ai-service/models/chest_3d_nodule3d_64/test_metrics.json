@@ -1,0 +1,8 @@
+{
+  "malignant_nodule": {
+    "threshold": 0.206006,
+    "roc_auc": 0.8262,
+    "average_precision": 0.6552,
+    "test_positive_count": 64
+  }
+}
