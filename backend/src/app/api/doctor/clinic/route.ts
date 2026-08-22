@@ -97,8 +97,10 @@ export async function GET(request: Request) {
     const statScope = clinicScope("clinic_key", assignedClinics);
 
     const [casesRows] = await sql.execute(
-      `SELECT s.id, p.name AS patient_name, p.age AS patient_age,
-       p.gender AS patient_gender, s.body_region, s.imaging_view,
+      `SELECT s.id, p.name AS patient_name,
+       COALESCE(s.patient_age, p.age) AS patient_age,
+       COALESCE(s.patient_gender, p.gender) AS patient_gender,
+       s.body_region, s.imaging_view,
        s.priority, s.status, COALESCE(a.predicted_finding, 'Not analyzed yet') AS predicted_finding,
        s.clinical_notes, s.original_file_name, s.created_at
        FROM study s

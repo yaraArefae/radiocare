@@ -14,10 +14,10 @@ export type ClinicKey =
   | "chest"
   | "shoulder"
   | "hand-wrist"
-  | "head"
   | "spine"
   | "pelvis"
   | "lower-limb"
+  | "head"
   | "general";
 
 export type ClinicDefinition = {
@@ -60,22 +60,6 @@ export const CLINIC_DEFINITIONS: ClinicDefinition[] = [
       "scoliosis",
       "kyphosis",
       "lordosis",
-    ],
-  },
-  {
-    key: "head",
-    name: "Head & Skull Clinic",
-    specialty: "Head & Skull Imaging",
-    description: "Skull, cranial and facial bone images.",
-    patientRegions: ["Head & Skull"],
-    keywords: [
-      "head",
-      "skull",
-      "cranial",
-      "cranium",
-      "brain",
-      "neuro",
-      "facial",
     ],
   },
   {
@@ -124,13 +108,20 @@ export const CLINIC_DEFINITIONS: ClinicDefinition[] = [
   },
   {
     key: "lower-limb",
-    name: "Leg, Knee & Foot Clinic",
+    name: "Leg & Foot Clinic",
     specialty: "Lower Limb Imaging",
-    description: "Leg, knee, ankle and foot images.",
-    patientRegions: ["Leg, Knee & Foot"],
+    description: "Leg, ankle and foot images.",
+    patientRegions: ["Leg & Foot"],
+    /*
+      The knee is no longer read here. Its words stay in this list on
+      purpose: a study filed as a knee before the change, or a doctor
+      whose profile says "knee surgery", still has to resolve to a real
+      clinic rather than falling through to the general one.
+    */
     keywords: [
       "lower limb",
       "leg knee foot",
+      "leg & foot",
       "leg",
       "femur",
       "knee",
@@ -143,6 +134,24 @@ export const CLINIC_DEFINITIONS: ClinicDefinition[] = [
       "toe",
       "calcane",
       "tarsal",
+    ],
+  },
+  {
+    key: "head",
+    name: "Head & Skull Clinic",
+    specialty: "Neuroradiology",
+    description: "Brain, skull and head vessel studies.",
+    patientRegions: ["Head"],
+    keywords: [
+      "head",
+      "skull",
+      "brain",
+      "cerebral",
+      "cranial",
+      "intracranial",
+      "neuro",
+      "aneurysm",
+      "glioma",
     ],
   },
   {
@@ -189,10 +198,24 @@ const RETIRED_CLINIC_KEYS: Record<string, ClinicKey[]> = {
   bone: ORTHOPEDIC_CLINICS,
   /* The arm was one clinic before the shoulder and the hand split. */
   "upper-limb": ["shoulder", "hand-wrist"],
-  neuro: ["head"],
   cardiac: ["chest"],
   breast: ["chest"],
-  dental: ["head"],
+  /*
+    The head and skull clinic is back.
+
+    It was removed because no model had ever been trained for it, so
+    every case it received reached a doctor with no preliminary reading
+    at all, and a clinic that only forwards is a queue with a name. That
+    is no longer true: the brain tumour model reads a post contrast MRI
+    at 0.986, and the vessel model answers on aneurysms at 0.946.
+
+    Cases that were moved to the general clinic while it was gone stay
+    where they are. Moving them back would reopen readings a doctor has
+    already signed, and the general clinic is not a wrong place for a
+    head study, only a less specific one.
+  */
+  neuro: ["head"],
+  dental: [],
 };
 
 export function replacementClinics(key: string): ClinicKey[] {
@@ -260,7 +283,7 @@ export function resolveClinicKey(
   Reads the clinics a doctor works in out of their profile. Every phrase
   is examined, not just the first match, because one doctor can cover
   several clinics: "Orthopedics - hand and foot surgery" is both the hand
-  and wrist clinic and the leg, knee and foot clinic.
+  and wrist clinic and the leg and foot clinic.
 */
 export function clinicKeysFromProfile(
   specialty: unknown,

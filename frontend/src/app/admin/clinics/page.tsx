@@ -227,15 +227,28 @@ export default function AdminClinicsPage() {
           </p>
 
           <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {clinics.map((clinic) => (
-              <div
-                key={clinic.key}
-                className={`rounded-2xl border p-5 ${
-                  clinic.doctorCount === 0
-                    ? "border-amber-300/35 bg-amber-400/10"
-                    : "border-white/15 bg-white/[0.06]"
-                }`}
-              >
+            {clinics.map((clinic) => {
+              /*
+                Every clinic opens the screen its doctors work on, so an
+                administrator reads a queue the same way the clinic does
+                instead of guessing from a case count. The general
+                clinic has no such screen: it is where unmatched cases
+                land, not a place anybody works in.
+              */
+              const hasClinicPage = clinic.key !== "general";
+
+              const tileClassName = `block rounded-2xl border p-5 transition ${
+                clinic.doctorCount === 0
+                  ? "border-amber-300/35 bg-amber-400/10"
+                  : "border-white/15 bg-white/[0.06]"
+              } ${
+                hasClinicPage
+                  ? "hover:-translate-y-0.5 hover:border-cyan-300/50 hover:bg-white/[0.1]"
+                  : ""
+              }`;
+
+              const tileContent = (
+                <>
                 <p className="font-black text-white">{clinic.name}</p>
 
                 <p className="mt-1 text-sm text-slate-300">
@@ -259,8 +272,29 @@ export default function AdminClinicsPage() {
                     {clinic.doctorCount === 1 ? "" : "s"}
                   </span>
                 </div>
-              </div>
-            ))}
+
+                {hasClinicPage && (
+                  <p className="mt-3 text-xs font-bold text-cyan-300">
+                    Open the clinic →
+                  </p>
+                )}
+                </>
+              );
+
+              return hasClinicPage ? (
+                <Link
+                  key={clinic.key}
+                  href={`/doctor/clinic/${clinic.key}`}
+                  className={tileClassName}
+                >
+                  {tileContent}
+                </Link>
+              ) : (
+                <div key={clinic.key} className={tileClassName}>
+                  {tileContent}
+                </div>
+              );
+            })}
           </div>
         </section>
 

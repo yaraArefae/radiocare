@@ -13,10 +13,10 @@ import { authClient } from "@/client/auth/auth-client";
   when uploading, so every one of them has its own key on the server.
 */
 type ClinicKey =
+  | "head"
   | "chest"
   | "shoulder"
   | "hand-wrist"
-  | "head"
   | "spine"
   | "pelvis"
   | "lower-limb";
@@ -56,6 +56,16 @@ const backendBaseUrl = (
 ).replace(/\/$/, "");
 
 const clinicData: Record<string, ClinicInformation> = {
+  head: {
+    name: "Head & Skull Clinic",
+    specialty: "Neuroradiology",
+    description:
+      "Manage brain MRI, head vessel studies, and skull imaging cases.",
+    icon: "🧠",
+    imageTypes: ["Brain MRI", "Head MRA", "Skull"],
+    apiClinicKey: "head",
+  },
+
   chest: {
     name: "Chest Clinic",
     specialty: "Pulmonology & Chest Imaging",
@@ -64,16 +74,6 @@ const clinicData: Record<string, ClinicInformation> = {
     icon: "🫁",
     imageTypes: ["Chest X-ray", "Pneumonia", "Thoracic Imaging"],
     apiClinicKey: "chest",
-  },
-
-  head: {
-    name: "Head & Skull Clinic",
-    specialty: "Neurology & Skull Imaging",
-    description:
-      "Manage head and skull radiology studies and review cranial imaging results.",
-    icon: "🧠",
-    imageTypes: ["Skull X-ray", "Head Imaging", "Cranial Studies"],
-    apiClinicKey: "head",
   },
 
   spine: {
@@ -117,12 +117,12 @@ const clinicData: Record<string, ClinicInformation> = {
   },
 
   "lower-limb": {
-    name: "Leg, Knee & Foot Clinic",
-    specialty: "Leg, Knee & Foot Imaging",
+    name: "Leg & Foot Clinic",
+    specialty: "Leg & Foot Imaging",
     description:
-      "Manage leg, knee, ankle, foot, and lower-limb radiology studies.",
+      "Manage leg, ankle, foot, and lower-limb radiology studies.",
     icon: "🦵",
-    imageTypes: ["Leg", "Knee", "Foot"],
+    imageTypes: ["Leg", "Foot"],
     apiClinicKey: "lower-limb",
   },
 };
@@ -355,17 +355,26 @@ export default function ClinicDetailsPage() {
   return (
     <main className="min-h-screen bg-gradient-to-br from-[#06142f] via-[#0a2450] to-[#071a38] px-6 py-8">
       <div className="mx-auto max-w-7xl">
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <Link
-            href="/doctor/clinic"
-            className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/[0.07] px-4 py-2.5 font-bold text-cyan-200 backdrop-blur-xl transition hover:border-cyan-300/50 hover:bg-white/[0.12] hover:text-white"
-          >
-            <span>←</span>
-            <span>Back to Clinics</span>
-          </Link>
-
+        {/*
+          There is no way back to the clinic list here on purpose: a
+          doctor works in one clinic and is taken straight to it, so the
+          list was a screen they never asked for. A doctor who covers
+          more than one still reaches it at /doctor/clinic?all=1, which
+          is the address the list itself answers on.
+        */}
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end">
           <div className="flex flex-wrap items-center gap-3">
             <NotificationBell />
+
+            {/* The page patients see when they pick a doctor in this
+                clinic, and the only place its photo, description,
+                languages and price can be changed. */}
+            <Link
+              href="/doctor/profile"
+              className="inline-flex items-center justify-center rounded-2xl border border-cyan-300/30 bg-cyan-400/15 px-5 py-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/25"
+            >
+              👤 My Profile
+            </Link>
 
             <Link
               href="/doctor/messages"

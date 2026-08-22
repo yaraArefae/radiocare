@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 const aiServiceUrl = (
-  process.env.NEXT_PUBLIC_AI_SERVICE_URL ?? "http://localhost:8000"
+  process.env.NEXT_PUBLIC_AI_SERVICE_URL ?? "http://localhost:8001"
 ).replace(/\/$/, "");
 
 export type ClinicFinding = {

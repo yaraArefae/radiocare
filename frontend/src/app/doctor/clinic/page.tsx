@@ -1,14 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
 
 import ClinicAiStatus, {
   useClinicCapabilities,
 } from "@/components/ClinicAiStatus";
 import NotificationBell from "@/components/NotificationBell";
 import PasswordChangeGate from "@/components/PasswordChangeGate";
+import SupportInboxCard from "@/components/SupportInboxCard";
 import { authClient } from "@/client/auth/auth-client";
 
 const backendBaseUrl = (
@@ -17,6 +18,15 @@ const backendBaseUrl = (
 
 const clinics = [
   {
+    slug: "head",
+    name: "Head & Skull Clinic",
+    specialty: "Neuroradiology",
+    description:
+      "Review brain MRI, head vessel studies, and skull imaging.",
+    icon: "🧠",
+    imageTypes: ["Brain MRI", "Head MRA", "Skull"],
+  },
+  {
     slug: "chest",
     name: "Chest Clinic",
     specialty: "Pulmonology & Chest Imaging",
@@ -24,15 +34,6 @@ const clinics = [
       "Review chest X-rays, pneumonia cases, and thoracic imaging studies.",
     icon: "🫁",
     imageTypes: ["Chest X-ray", "Pneumonia"],
-  },
-  {
-    slug: "head",
-    name: "Head & Skull Clinic",
-    specialty: "Neurology & Skull Imaging",
-    description:
-      "Review skull and head X-rays and assess cranial imaging studies.",
-    icon: "🧠",
-    imageTypes: ["Skull X-ray", "Head Imaging"],
   },
   {
     slug: "spine",
@@ -72,17 +73,18 @@ const clinics = [
   },
   {
     slug: "lower-limb",
-    name: "Leg, Knee & Foot Clinic",
-    specialty: "Leg, Knee & Foot Imaging",
+    name: "Leg & Foot Clinic",
+    specialty: "Leg & Foot Imaging",
     description:
-      "Review leg, knee, ankle, and foot X-rays for fractures and abnormalities.",
+      "Review leg, ankle, and foot X-rays for fractures and abnormalities.",
     icon: "🦵",
-    imageTypes: ["Leg", "Knee", "Foot"],
+    imageTypes: ["Leg", "Foot"],
   },
 ];
 
-export default function DoctorClinicsPage() {
+function DoctorClinicsContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { capabilities } = useClinicCapabilities();
 
   /*
@@ -119,6 +121,25 @@ export default function DoctorClinicsPage() {
   useEffect(() => {
     void loadMyClinics();
   }, [loadMyClinics]);
+
+  /*
+    A doctor of one clinic is taken to it rather than to a list holding
+    a single card, which was one click before the only screen they came
+    for. The list stays reachable through the back link on that screen,
+    which asks for it by name.
+  */
+  const onlyClinic =
+    !isLoadingClinics &&
+    searchParams.get("all") !== "1" &&
+    myClinics.length === 1
+      ? clinics.find((clinic) => clinic.slug === myClinics[0])
+      : undefined;
+
+  useEffect(() => {
+    if (onlyClinic) {
+      router.replace(`/doctor/clinic/${onlyClinic.slug}`);
+    }
+  }, [onlyClinic, router]);
 
   /*
     Clinics are shown in the order the AI can actually support them, so a
@@ -165,6 +186,28 @@ export default function DoctorClinicsPage() {
     }
   }
 
+  /*
+    Nothing is drawn while the clinics are still unknown, or while the
+    only clinic is being opened. Drawing the list first would show a
+    doctor a card for a fraction of a second and then take it away,
+    which reads as a glitch rather than as a shortcut.
+  */
+  if (isLoadingClinics || onlyClinic) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#06142f] via-[#0a2450] to-[#071a38]">
+        <div className="text-center">
+          <div className="mx-auto h-14 w-14 animate-spin rounded-full border-4 border-cyan-300/20 border-t-cyan-300" />
+
+          <p className="mt-5 font-bold text-white">
+            {onlyClinic
+              ? `Opening the ${onlyClinic.name}...`
+              : "Loading clinics..."}
+          </p>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-gradient-to-br from-[#06142f] via-[#0a2450] to-[#071a38] px-6 py-8">
       <PasswordChangeGate />
@@ -190,6 +233,16 @@ export default function DoctorClinicsPage() {
             <div className="flex h-fit flex-wrap items-center gap-3">
               <NotificationBell />
 
+              {/* The page patients see when they pick a doctor in this
+                  clinic, and the only place its photo, description,
+                  languages and price can be changed. */}
+              <Link
+                href="/doctor/profile"
+                className="inline-flex rounded-2xl border border-cyan-300/30 bg-cyan-400/15 px-5 py-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/25"
+              >
+                👤 My Profile
+              </Link>
+
               <Link
                 href="/doctor/messages"
                 className="inline-flex rounded-2xl border border-cyan-300/30 bg-cyan-400/15 px-5 py-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-400/25"
@@ -203,6 +256,12 @@ export default function DoctorClinicsPage() {
               >
                 📅 Appointments Calendar
               </Link>
+
+              {/* Case messages reach a patient; this one reaches the
+                  administration, about the account rather than a case.
+                  It carries its own unread count, so an answer shows
+                  here even after the notification has been read. */}
+              <SupportInboxCard viewerRole="doctor" variant="button" />
 
               <button
                 type="button"
@@ -284,5 +343,19 @@ export default function DoctorClinicsPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function DoctorClinicsPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#06142f] via-[#0a2450] to-[#071a38]">
+          <p className="font-bold text-cyan-100">Loading clinics...</p>
+        </main>
+      }
+    >
+      <DoctorClinicsContent />
+    </Suspense>
   );
 }
