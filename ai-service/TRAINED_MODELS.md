@@ -1,6 +1,6 @@
 # RadioCare — the trained models
 
-Eighteen models were trained and measured. Every number below is the
+Twenty models were trained and measured. Every number below is the
 model's **weakest finding**, measured on a **test split** that was never
 used to tune it.
 
@@ -8,28 +8,30 @@ The weakest finding is the number that matters, because a doctor meets
 the weakest one as often as the best one. The service applies the same
 rule when it decides how to present a result.
 
-| # | Model | Type | Diagnoses | Score | Verdict |
-|---|---|---|---|---|---|
-| 1 | Head MRI | MRI | Enhancing brain tumour | 0.986 | Reliable |
-| 2 | Chest CT — Lung Tumour | CT | Lung tumour | 0.979 | Reliable |
-| 3 | Chest X-ray — Triage | X-ray | Normal / abnormal | 0.965 | Reliable |
-| 4 | Head MRA | MRA | Intracranial aneurysm | 0.946 | Reliable |
-| 5 | Colon CT | CT | Colon tumour | 0.914 | Reliable |
-| 6 | Chest CT — Nodule | CT | Malignant nodule | 0.908 | Reliable |
-| 7 | Hand & Wrist X-ray | X-ray | Fracture, osteopenia, cast, metal | 0.904 | Reliable |
-| 8 | Kidney CT | CT | Kidney tumour | 0.891 | Reliable |
-| 9 | Abdomen CT — Adrenal | CT | Adrenal mass | 0.888 | Reliable |
-| 10 | Leg & Foot X-ray | X-ray | Benign / malignant bone lesion | 0.858 | Reliable |
-| 11 | Shoulder X-ray | X-ray | Shoulder abnormality | 0.777 | Confirm each finding |
-| 12 | Chest CT — COVID | CT | Lung involvement | 0.756 | Confirm each finding |
-| 13 | Pelvis & Hip X-ray | X-ray | Bone lesion | 0.686 | Too weak |
-| 14 | Rib CT | CT | Rib fracture, three types | 0.696 | Too weak |
-| 15 | Chest X-ray — Findings | X-ray | Eight chest findings | 0.678 | Too weak |
-| 16 | Spine X-ray | X-ray | Cervical curvature, three types | 0.676 | Too weak |
-| 17 | Shoulder Fracture X-ray | X-ray | Shoulder fracture | 0.664 | **Disabled in code** |
-| 18 | Liver CT | CT | Liver tumour | 0.609 | Too weak |
+| # | Model | Type | Diagnoses | Score | Accuracy | Verdict |
+|---|---|---|---|---|---|---|
+| 1 | Head MRI | MRI | Enhancing brain tumour | 0.986 | 0.95 | Reliable |
+| 2 | Chest CT - Lung Tumour | CT | Lung tumour | 0.979 | 0.92 | Reliable |
+| 3 | Pancreas CT | CT | Pancreas tumour | 0.974 | 0.92 | Reliable |
+| 4 | Chest X-ray - Triage | X-ray | Normal / abnormal | 0.965 | - | Reliable |
+| 5 | Head MRA | MRA | Intracranial aneurysm | 0.946 | 0.92 | Reliable |
+| 6 | Liver Vessels CT | CT | Hepatic vessel tumour | 0.940 | 0.89 | Reliable |
+| 7 | Abdomen CT - Adrenal | CT | Adrenal mass | 0.934 | 0.86 | Reliable |
+| 8 | Colon CT | CT | Colon tumour | 0.914 | 0.84 | Reliable |
+| 9 | Chest CT - Nodule | CT | Malignant nodule | 0.908 | 0.86 | Reliable |
+| 10 | Hand & Wrist X-ray | X-ray | Fracture, osteopenia, cast, metal | 0.904 | - | Reliable |
+| 11 | Kidney CT | CT | Kidney tumour | 0.891 | 0.85 | Reliable |
+| 12 | Leg & Foot X-ray | X-ray | Benign / malignant bone lesion | 0.858 | - | Reliable |
+| 13 | Shoulder X-ray | X-ray | Shoulder abnormality | 0.777 | - | Confirm each finding |
+| 14 | Chest CT - COVID | CT | Lung involvement | 0.756 | 0.63 | Confirm each finding |
+| 15 | Rib CT | CT | Rib fracture, three types | 0.696 | - | Too weak |
+| 16 | Pelvis & Hip X-ray | X-ray | Bone lesion | 0.686 | - | Too weak |
+| 17 | Chest X-ray - Findings | X-ray | Eight chest findings | 0.678 | - | Too weak |
+| 18 | Spine X-ray | X-ray | Cervical curvature, three types | 0.676 | - | Too weak |
+| 19 | Shoulder Fracture X-ray | X-ray | Shoulder fracture | 0.664 | - | Disabled in code |
+| 20 | Liver CT | CT | Liver tumour | 0.609 | 0.61 | Too weak |
 
-**Reliable 10 · Confirm each finding 2 · Too weak 6**
+**Reliable 12 · Confirm each finding 2 · Too weak 6**
 
 ---
 
@@ -48,8 +50,29 @@ rule when it decides how to present a result.
 
 ## Not in the table
 
-**Still training:** `Pancreas CT` and `Liver Vessels CT` are registered
-and answer `NOT_ANALYZED` until their models land.
+**Resolution is not a free win.** Three models were retrained at 64
+voxels a side against their 28 voxel versions, on the same test split
+each time. Only one improved:
+
+| | 28³ | 64³ | Served |
+|---|---|---|---|
+| Adrenal mass | 0.888 | **0.934** | 64³ |
+| Lung nodule | **0.908** | 0.826 | 28³ |
+| Head vessels | **0.946** | 0.828 | 28³ |
+
+Swapping on the assumption that bigger is better would have cost 0.12 on
+the head vessels. Each pair was measured before anything was changed.
+
+**Two datasets were tried for the same organ.** M3D-Seg against the
+Medical Segmentation Decathlon:
+
+| | MSD | M3D | Served |
+|---|---|---|---|
+| Colon tumour | **0.914** | 0.869 | MSD |
+| Pancreas tumour | **0.974** (448 positives) | 0.973 (32) | MSD |
+
+The pancreas pair is a tie on the number and not on the evidence: 448
+positives against 32.
 
 **Never trained — no public labelled data exists:** `Spine CT`,
 `Pelvis & Hip CT`, `Lower Limb CT`, `Shoulder CT`. They are registered
