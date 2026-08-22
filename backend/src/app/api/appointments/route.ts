@@ -6,6 +6,7 @@ import {
   normalizeDurationMinutes,
 } from "@/server/appointments/scheduling";
 import { auth } from "@/server/auth/auth";
+import { resolveActingDoctor } from "@/server/secretaries/acting-doctor";
 import { servesClinic } from "@/server/clinics/doctor-clinics";
 import { databaseReady, sql } from "@/server/database/database";
 import {
@@ -51,8 +52,16 @@ export async function GET(request: Request) {
     }
 
     const roles = normalizeRoles(session.user?.role);
-    const isDoctor = roles.includes("doctor");
     const isPatient = roles.includes("patient");
+
+    /*
+      A doctor reads their own calendar, and a secretary reads the one
+      of the doctor they work for. Both take the same branch below,
+      because a secretary's whole job is that calendar: giving them a
+      separate query would be a second place for the rules to drift.
+    */
+    const acting = await resolveActingDoctor(session);
+    const isDoctor = acting !== null;
 
     if (!isDoctor && !isPatient) {
       return Response.json(
@@ -110,7 +119,9 @@ export async function GET(request: Request) {
     const query = isDoctor
       ? `SELECT ${sharedColumns},
          p.name AS patientName, p.id AS patientId,
-         COALESCE(p.phone, '') AS patientPhone, p.age AS patientAge, p.gender AS patientGender
+         COALESCE(p.phone, '') AS patientPhone,
+         COALESCE(s.patient_age, p.age) AS patientAge,
+         COALESCE(s.patient_gender, p.gender) AS patientGender
          FROM appointment a
          JOIN study s ON s.id = a.study_id
          JOIN patient p ON p.id = a.patient_id
@@ -127,7 +138,7 @@ export async function GET(request: Request) {
          ORDER BY a.scheduled_at ASC`;
 
     const [appointmentsRows] = await sql.execute(query, [
-      session.user?.id,
+      isDoctor ? acting!.doctorUserId : session.user?.id,
       ...rangeValues,
     ]);
 
@@ -166,11 +177,13 @@ export async function POST(request: Request) {
 
     const roles = normalizeRoles(session.user?.role);
 
-    if (!roles.includes("doctor")) {
+    const acting = await resolveActingDoctor(session);
+
+    if (!acting) {
       return Response.json(
         {
           success: false,
-          message: "Doctor access is required.",
+          message: "Doctor or secretary access is required.",
         },
         { status: 403 },
       );
@@ -237,7 +250,7 @@ export async function POST(request: Request) {
        FROM doctor_profile
        WHERE user_id = ?
        LIMIT 1`,
-      [session.user?.id],
+      [acting.doctorUserId],
     );
 
     const doctorProfile = (doctorRows as any[])[0];
@@ -286,7 +299,7 @@ export async function POST(request: Request) {
     }
 
     const conflict = await findConflictingAppointment({
-      doctorId: String(session.user?.id),
+      doctorId: acting.doctorUserId,
       startsAt: scheduledAt,
       durationMinutes,
     });
@@ -317,7 +330,7 @@ export async function POST(request: Request) {
         appointmentId,
         studyId,
         study.patientId,
-        session.user?.id,
+        acting.doctorUserId,
         scheduledAtSql,
         durationMinutes,
         notes || null,
@@ -333,14 +346,20 @@ export async function POST(request: Request) {
        VALUES (?, ?, 'doctor', ?)`,
       [
         appointmentId,
-        session.user?.id,
+        /*
+          Sent as the doctor even when a secretary booked it. To the
+          patient this is an invitation from their doctor, and a message
+          from a name they have never seen would read as a stranger
+          asking them to come to a hospital.
+        */
+        acting.doctorUserId,
         `Appointment invitation sent for ${scheduledAt.toISOString()} (${durationMinutes} minutes). Please approve or decline it from your dashboard.`,
       ],
     );
 
     const [doctorNameRows] = await sql.execute(
       "SELECT full_name AS fullName FROM doctor_profile WHERE user_id = ? LIMIT 1",
-      [session.user?.id],
+      [acting.doctorUserId],
     );
 
     const doctorName =
@@ -365,7 +384,7 @@ export async function POST(request: Request) {
         id: appointmentId,
         studyId,
         patientId: study.patientId,
-        doctorId: session.user?.id,
+        doctorId: acting.doctorUserId,
         scheduledAt: scheduledAt.toISOString(),
         durationMinutes,
         status: "Pending",

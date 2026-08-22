@@ -1,4 +1,5 @@
 import { auth } from "@/server/auth/auth";
+import { resolveActingDoctor } from "@/server/secretaries/acting-doctor";
 import { databaseReady, sql } from "@/server/database/database";
 import { createNotification } from "@/server/notifications/notifications";
 
@@ -32,12 +33,26 @@ export async function GET(request: Request) {
     }
 
     const roles = normalizeRoles(session.user?.role);
-    const isDoctor = roles.includes("doctor");
     const isPatient = roles.includes("patient");
+
+    /*
+      A secretary joins this conversation on the doctor's side.
+
+      This is the thread where a doctor asks for a different time and a
+      patient says the one offered does not suit them, and the secretary
+      is the person who acts on both. Leaving her out would send those
+      requests somewhere she cannot read, and the only person who can
+      move the appointment would hear about it verbally or not at all.
+    */
+    const acting = await resolveActingDoctor(session);
+    const isDoctor = acting !== null;
 
     if (!isDoctor && !isPatient) {
       return Response.json(
-        { success: false, message: "Doctor or patient access is required." },
+        {
+          success: false,
+          message: "Doctor, secretary or patient access is required.",
+        },
         { status: 403 },
       );
     }
@@ -72,7 +87,7 @@ export async function GET(request: Request) {
     }
 
     const userId = session.user?.id;
-    if (isDoctor && appointment.doctorId !== userId) {
+    if (isDoctor && appointment.doctorId !== acting!.doctorUserId) {
       return Response.json(
         { success: false, message: "Doctor access denied for this appointment." },
         { status: 403 },
@@ -120,12 +135,26 @@ export async function POST(request: Request) {
     }
 
     const roles = normalizeRoles(session.user?.role);
-    const isDoctor = roles.includes("doctor");
     const isPatient = roles.includes("patient");
+
+    /*
+      A secretary joins this conversation on the doctor's side.
+
+      This is the thread where a doctor asks for a different time and a
+      patient says the one offered does not suit them, and the secretary
+      is the person who acts on both. Leaving her out would send those
+      requests somewhere she cannot read, and the only person who can
+      move the appointment would hear about it verbally or not at all.
+    */
+    const acting = await resolveActingDoctor(session);
+    const isDoctor = acting !== null;
 
     if (!isDoctor && !isPatient) {
       return Response.json(
-        { success: false, message: "Doctor or patient access is required." },
+        {
+          success: false,
+          message: "Doctor, secretary or patient access is required.",
+        },
         { status: 403 },
       );
     }
@@ -167,7 +196,7 @@ export async function POST(request: Request) {
     }
 
     const userId = session.user?.id;
-    if (isDoctor && appointment.doctorId !== userId) {
+    if (isDoctor && appointment.doctorId !== acting!.doctorUserId) {
       return Response.json(
         { success: false, message: "Doctor access denied for this appointment." },
         { status: 403 },

@@ -4,6 +4,7 @@ import {
   normalizeDurationMinutes,
 } from "@/server/appointments/scheduling";
 import { auth } from "@/server/auth/auth";
+import { resolveActingDoctor } from "@/server/secretaries/acting-doctor";
 import { databaseReady, sql } from "@/server/database/database";
 import {
   createNotification,
@@ -73,8 +74,16 @@ export async function PATCH(
     }
 
     const roles = normalizeRoles(session.user?.role);
-    const isDoctor = roles.includes("doctor");
     const isPatient = roles.includes("patient");
+
+    /*
+      A secretary changes their doctor's appointments through the same
+      actions the doctor uses. Everything below compares against the
+      doctor's own id, so cancelling and rescheduling work for both
+      without a second set of rules to keep in step.
+    */
+    const acting = await resolveActingDoctor(session);
+    const isDoctor = acting !== null;
 
     if (!isDoctor && !isPatient) {
       return Response.json(
@@ -125,7 +134,7 @@ export async function PATCH(
 
     const userId = session.user?.id;
 
-    if (isDoctor && appointment.doctorId !== userId) {
+    if (isDoctor && appointment.doctorId !== acting!.doctorUserId) {
       return Response.json(
         {
           success: false,
