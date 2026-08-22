@@ -8,7 +8,7 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 import numpy as np
 import tensorflow as tf
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image, UnidentifiedImageError
 
@@ -21,6 +21,33 @@ AI_SERVICE_DIR = Path(__file__).resolve().parents[1]
 
 CHEST_MODEL_PATH = (
     AI_SERVICE_DIR / "models" / "chest" / "chest_model.keras"
+)
+
+"""
+The chest triage model: is this chest normal or not.
+
+The normal or abnormal decision used to be read out of the multi label
+findings model, by asking whether any of its eight findings crossed a
+threshold. That went wrong on normal chests: the findings model returns
+84% for Atelectasis on a clear image, so the thresholds had to be raised
+to 90 and anything near one of them was reported as uncertain.
+
+This model answers the triage question directly. Measured on the same
+624 image test set, it reads a normal chest correctly 74% of the time
+against 69% for the old arrangement, and its accuracy is 88% against 85%.
+"""
+CHEST_TRIAGE_MODEL_PATH = (
+    AI_SERVICE_DIR
+    / "models"
+    / "chest_triage_v2"
+    / "chest_triage_v2_model.keras"
+)
+
+CHEST_TRIAGE_THRESHOLD_PATH = (
+    AI_SERVICE_DIR
+    / "models"
+    / "chest_triage_v2"
+    / "chest_triage_v2_thresholds.json"
 )
 
 CHEST_FINDINGS_MODEL_PATH = (
@@ -43,6 +70,54 @@ CHEST_FINDINGS_THRESHOLDS_PATH = (
     / "chest"
     / "chest_findings_thresholds_v2.json"
 )
+
+"""
+The shoulder triage model.
+
+The model served before this one answered "normal" to every image. On
+its own test set it read all 615 normal shoulders correctly and missed
+all 147 abnormal ones, for a ROC AUC of 0.5577, which is a coin toss.
+Its 80.7% accuracy came from the set being 80% normal, not from finding
+anything.
+
+It learned that from the data: 2870 normal against 681 abnormal in
+training makes "always normal" a winning answer. The replacement was
+trained with class weights against that lean, and its cut point was
+chosen on the validation set.
+
+Measured on the same 762 image test set:
+
+    abnormal found   0%  ->  76.9%   (missed 147 of 147  ->  34 of 147)
+    normal correct 100%  ->  60.5%
+    ROC AUC     0.5577   ->  0.7650
+
+Accuracy falls from 80.7% to 63.6% and that is the improvement, not a
+regression: the earlier number measured a model that found nothing.
+
+0.765 is still only moderate. The shoulder result assists a doctor, it
+does not stand on its own.
+"""
+SHOULDER_TRIAGE_MODEL_PATH = (
+    AI_SERVICE_DIR
+    / "models"
+    / "shoulder_triage_v4"
+    / "shoulder_triage_v4_model.keras"
+)
+
+SHOULDER_TRIAGE_THRESHOLD_PATH = (
+    AI_SERVICE_DIR
+    / "models"
+    / "shoulder_triage_v4"
+    / "shoulder_triage_v4_thresholds.json"
+)
+
+"""
+This backbone is an EfficientNet, which rescales inside itself and takes
+the raw 0 to 255 pixels. The model it replaced was a MobileNetV2 and
+needed preprocess_input first. Sending either the wrong input returns a
+confident number that means nothing.
+"""
+SHOULDER_TRIAGE_NEEDS_RAW_PIXELS = True
 
 SHOULDER_FINE_TUNED_MODEL_PATH = (
     AI_SERVICE_DIR
@@ -71,7 +146,20 @@ CHEST_NORMAL_THRESHOLD = 0.40
 CHEST_ABNORMAL_THRESHOLD = 0.60
 
 DEFAULT_SHOULDER_THRESHOLD = 0.50
-SHOULDER_UNCERTAINTY_MARGIN = 0.08
+"""
+How close to the threshold a shoulder score must be before the image is
+called uncertain rather than decided.
+
+At 0.08 the band ran from 0.49 to 0.65 and swallowed 19% of the normal
+shoulders in the test set, 117 of 615. A normal shoulder scoring 0.54
+against a threshold of 0.57 was reported as uncertain, which tells the
+patient nothing and sends the doctor a case the model had in fact
+decided.
+
+At 0.03 the band holds 7.6% of normal shoulders, and those are the ones
+genuinely sitting on the line.
+"""
+SHOULDER_UNCERTAINTY_MARGIN = 0.03
 
 SHOULDER_FRACTURE_MODEL_PATH = (
     AI_SERVICE_DIR
@@ -215,29 +303,86 @@ and the thresholds file follows the same shape as the wrist one:
      "thresholds": {"fracture_visible": 0.31, ...}}
 """
 REGION_MODEL_REGISTRY: dict[str, dict[str, Any]] = {
-    "head": {
-        "displayName": "Head & Skull",
-        "bodyRegion": "HEAD_SKULL",
-        "clinic": "neuro",
-        "folder": "head_skull_findings",
-    },
     "spine": {
         "displayName": "Spine",
         "bodyRegion": "SPINE",
         "clinic": "spine",
-        "folder": "spine_findings",
+        # v3 learns the atlas the way the atlas is written: one
+        # curvature grade per film, chosen by a softmax, with the three
+        # findings summed out of the four grades by a fixed layer. The
+        # grades compete for one probability instead of being three
+        # independent questions, which is what let the old model be sure
+        # of two contradictory shapes at once. Measured on the same test
+        # split as its predecessors:
+        #
+        #                        v1      v2      v3
+        #   curvature AUC       0.853   0.909   0.926
+        #   kyphosis precision  0.47    0.70    0.74
+        #   kyphosis alarms     66      19      17
+        #   healthy sent on     44.7%   40.2%   36.7%
+        #
+        # The earlier models stay in models/spine_findings and
+        # models/spine_findings_v2 so the three can be compared again.
+        "folder": "spine_findings_v3",
+        # The spine clinic accepts cervical, thoracic and lumbar films,
+        # but this model was trained on the Cervical Spine X-ray Atlas
+        # and knows one thing only: the shape of the cervical curvature.
+        # On a lumbar film it still returns a number, and that number
+        # means nothing. The scope is written into every answer, so a
+        # doctor reading a thoracic or lumbar study is never left to
+        # assume the AI examined it.
+        "scopeNote": (
+            "This model reads the curvature of the cervical spine "
+            "only. On a thoracic or lumbar film its result carries no "
+            "meaning and the doctor's reading is the only one."
+        ),
     },
     "pelvis": {
         "displayName": "Pelvis & Hip",
         "bodyRegion": "PELVIS_HIP",
         "clinic": "orthopedic",
-        "folder": "pelvis_hip_findings",
+        # The same argument that moved the lower limb onto the all
+        # region model applies here, and more sharply: BTXRD holds only
+        # 228 pelvis films, against 3746 once every region is counted.
+        # Measured on the pelvis test split, pelvis only against all
+        # regions:
+        #
+        #                        pelvis only   all regions
+        #   bone lesion AUC         0.731         0.851
+        #   malignant AUC           0.758         0.844
+        #   benign AUC              0.708         0.686
+        #
+        # The two labels a doctor cannot afford to miss both improve,
+        # and benign gives up almost nothing. The split is 37 films, so
+        # these numbers are noisy on their own; what makes them
+        # convincing is that they point the same way as the lower limb
+        # measurement, which was taken on far more cases.
+        #
+        # The pelvis only model stays in models/pelvis_hip_findings so
+        # the two can be compared again.
+        "folder": "btxrd_lesion_all",
     },
     "lower-limb": {
         "displayName": "Lower Limb",
         "bodyRegion": "LOWER_LIMB",
         "clinic": "orthopedic",
-        "folder": "lower_limb_findings",
+        # A lesion in a hip looks like a lesion in a femur, so this
+        # model was trained on every BTXRD region at once rather than on
+        # the leg alone: 2604 images instead of 1726. Measured on the
+        # leg's own test split, against the model trained only on legs:
+        #
+        #                          leg only   all regions
+        #   bone lesion AUC          0.880      0.897
+        #   malignant AUC            0.849      0.909
+        #   malignant false alarms   61         20
+        #   malignant cases that
+        #     reach nobody            4          2
+        #
+        # The last row is the one that decided it. The malignant label
+        # alone finds fewer cases, but the lesion labels around it catch
+        # what it drops, so half as many malignant films end up with no
+        # finding at all.
+        "folder": "btxrd_lesion_all",
     },
     # Not a body region of its own: the shared fracture model is reached
     # through this entry so it uses the same loading and caching path.
@@ -285,11 +430,6 @@ REGION_LABEL_INFO = {
         "code": "POSSIBLE_VERTEBRAL_COMPRESSION",
         "clinicalPriority": 1,
     },
-    "skull_fracture": {
-        "name": "Possible Skull Fracture",
-        "code": "POSSIBLE_FRACTURE",
-        "clinicalPriority": 1,
-    },
     "effusion": {
         "name": "Joint Effusion",
         "code": "JOINT_EFFUSION",
@@ -305,6 +445,79 @@ REGION_LABEL_INFO = {
         "code": "MALIGNANT_BONE_LESION",
         "clinicalPriority": 1,
     },
+    # The findings the volumetric models produce. They share this table
+    # with the X-ray models so one label always gets one name, whichever
+    # kind of study it was read from.
+    "malignant_nodule": {
+        "name": "Suspicious for Malignant Lung Nodule",
+        "code": "MALIGNANT_LUNG_NODULE",
+        "clinicalPriority": 1,
+    },
+    "buckle_rib_fracture": {
+        "name": "Buckle Rib Fracture",
+        "code": "BUCKLE_RIB_FRACTURE",
+        "clinicalPriority": 3,
+    },
+    "nondisplaced_rib_fracture": {
+        "name": "Nondisplaced Rib Fracture",
+        "code": "NONDISPLACED_RIB_FRACTURE",
+        "clinicalPriority": 2,
+    },
+    "displaced_rib_fracture": {
+        "name": "Displaced Rib Fracture",
+        "code": "DISPLACED_RIB_FRACTURE",
+        "clinicalPriority": 1,
+    },
+    "adrenal_mass": {
+        "name": "Adrenal Gland Mass",
+        "code": "ADRENAL_MASS",
+        "clinicalPriority": 2,
+    },
+    "intracranial_aneurysm": {
+        "name": "Possible Intracranial Aneurysm",
+        "code": "INTRACRANIAL_ANEURYSM",
+        "clinicalPriority": 1,
+    },
+    "lung_involvement": {
+        "name": "Lung Involvement",
+        "code": "LUNG_INVOLVEMENT",
+        "clinicalPriority": 2,
+    },
+    "lung_tumour": {
+        "name": "Lung Tumour",
+        "code": "LUNG_TUMOUR",
+        "clinicalPriority": 1,
+    },
+    "colon_tumour": {
+        "name": "Colorectal Tumour",
+        "code": "COLON_TUMOUR",
+        "clinicalPriority": 1,
+    },
+    "hepatic_vessel_tumour": {
+        "name": "Liver Vessel Tumour",
+        "code": "HEPATIC_VESSEL_TUMOUR",
+        "clinicalPriority": 1,
+    },
+    "pancreas_tumour": {
+        "name": "Pancreatic Tumour",
+        "code": "PANCREAS_TUMOUR",
+        "clinicalPriority": 1,
+    },
+    "kidney_tumour": {
+        "name": "Kidney Tumour",
+        "code": "KIDNEY_TUMOUR",
+        "clinicalPriority": 1,
+    },
+    "liver_tumour": {
+        "name": "Liver Tumour",
+        "code": "LIVER_TUMOUR",
+        "clinicalPriority": 1,
+    },
+    "enhancing_brain_tumour": {
+        "name": "Enhancing Brain Tumour",
+        "code": "ENHANCING_BRAIN_TUMOUR",
+        "clinicalPriority": 1,
+    },
 }
 
 """
@@ -312,6 +525,16 @@ Findings that must reach the doctor as an urgent case.
 """
 URGENT_REGION_CODES = URGENT_UPPER_LIMB_CODES | {
     "MALIGNANT_BONE_LESION",
+    "MALIGNANT_LUNG_NODULE",
+    "DISPLACED_RIB_FRACTURE",
+    "INTRACRANIAL_ANEURYSM",
+    "ENHANCING_BRAIN_TUMOUR",
+    "LUNG_TUMOUR",
+    "COLON_TUMOUR",
+    "HEPATIC_VESSEL_TUMOUR",
+    "PANCREAS_TUMOUR",
+    "LIVER_TUMOUR",
+    "KIDNEY_TUMOUR",
 }
 
 """
@@ -335,7 +558,18 @@ region_model_cache: dict[str, dict[str, Any]] = {}
 DEFAULT_SHOULDER_FRACTURE_THRESHOLD = 0.145
 SHOULDER_FRACTURE_HIGH_THRESHOLD = 0.80
 DEFAULT_FINDING_THRESHOLD = 0.50
-FINDING_UNCERTAINTY_MARGIN = 0.10
+"""
+How close to its threshold a finding must be before the image is called
+uncertain rather than normal.
+
+At ten points this swallowed most normal images: with eight findings,
+one of them nearly always lands within ten points of its threshold, so
+two thirds of the chest images that carried no detected finding were
+reported as uncertain. Measured over the images in hand, ten points gave
+4 normal and 8 uncertain; three points gives 10 normal and 2 uncertain,
+and those two are genuinely on the line.
+"""
+FINDING_UNCERTAINTY_MARGIN = 0.03
 ALLOWED_IMAGE_TYPES = {
     "image/jpeg",
     "image/jpg",
@@ -366,13 +600,31 @@ app = FastAPI(
     version="3.1.0",
 )
 
+"""
+Who may ask this service to read an image.
+
+The website is served from 3000 and the backend from 4000. The mobile
+application is a third caller: on a laptop it is a browser page served
+by Expo on 8090, and on a phone it is a native application, which sends
+no origin at all and so never reaches this check.
+
+The regular expression covers the phone's own address on the local
+network, which changes with the network and cannot be listed in
+advance. It is deliberately narrow: only private address ranges, only
+the ports this project runs on.
+"""
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:3001",
         "http://localhost:4000",
+        "http://localhost:8081",
+        "http://localhost:8082",
+        "http://localhost:8090",
+        "http://127.0.0.1:8090",
     ],
+    allow_origin_regex=r"http://(192\.168|10|172\.(1[6-9]|2\d|3[01]))\.[\d.]+:(3000|8081|8082|8090)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -385,6 +637,8 @@ app.add_middleware(
 
 chest_model = None
 chest_findings_model = None
+chest_triage_model = None
+chest_triage_threshold = 0.92
 shoulder_model = None
 shoulder_fracture_model = None
 wrist_pediatric_model = None
@@ -476,6 +730,22 @@ def load_chest_findings_metadata() -> tuple[
 
 
 def load_shoulder_threshold() -> float:
+    """
+    The cut point has to come from the same run as the model that is
+    loaded. The old file holds 0.31, which belongs to the model that
+    answered "normal" to everything; applying it to the retrained model
+    would score every image against a number tuned for a different one.
+    """
+    if SHOULDER_TRIAGE_MODEL_PATH.exists() and (
+        SHOULDER_TRIAGE_THRESHOLD_PATH.exists()
+    ):
+        try:
+            return float(
+                read_json_file(SHOULDER_TRIAGE_THRESHOLD_PATH)["threshold"]
+            )
+        except Exception as error:
+            print(f"Unable to read the shoulder triage threshold: {error}")
+
     if not SHOULDER_THRESHOLD_PATH.exists():
         print(
             "Shoulder threshold file was not found. "
@@ -648,6 +918,38 @@ try:
         compile=False,
     )
 
+    """
+    The triage model is optional. Without it the findings model decides
+    normal or abnormal on its own, which is how the service behaved
+    before, so a missing file degrades the result rather than breaking
+    the clinic.
+    """
+    if CHEST_TRIAGE_MODEL_PATH.exists():
+        print("Loading chest triage model...")
+
+        chest_triage_model = tf.keras.models.load_model(
+            CHEST_TRIAGE_MODEL_PATH,
+            compile=False,
+        )
+
+        if CHEST_TRIAGE_THRESHOLD_PATH.exists():
+            chest_triage_threshold = float(
+                read_json_file(CHEST_TRIAGE_THRESHOLD_PATH).get(
+                    "threshold",
+                    chest_triage_threshold,
+                )
+            )
+
+        print(
+            "Chest triage model ready, threshold "
+            f"{chest_triage_threshold}"
+        )
+    else:
+        print(
+            "Chest triage model not found; the findings model decides "
+            "normal or abnormal on its own."
+        )
+
     (
         chest_findings_labels,
         chest_findings_thresholds,
@@ -689,7 +991,10 @@ try:
     # shoulder_model.keras is the selected final model produced by
     # the latest training run. Keep the old fine-tuned file only as
     # a fallback for backward compatibility.
-    if SHOULDER_ORIGINAL_MODEL_PATH.exists():
+    if SHOULDER_TRIAGE_MODEL_PATH.exists():
+        selected_shoulder_model_path = SHOULDER_TRIAGE_MODEL_PATH
+
+    elif SHOULDER_ORIGINAL_MODEL_PATH.exists():
         selected_shoulder_model_path = (
             SHOULDER_ORIGINAL_MODEL_PATH
         )
@@ -731,7 +1036,47 @@ except Exception as error:
     )
 
 
+"""
+The shoulder fracture model is not loaded.
+
+It was measured on its own held out split, the one its training run set
+aside, reproduced from the same seed. On 142 films holding 9 fractures:
+
+    ROC AUC              0.664
+    average precision    0.141
+
+An AUC of 0.664 is close to a coin toss, and an average precision of
+0.141 says most of what it flags is not a fracture. A detector like that
+does not help a doctor, it buries them: the alarms that matter arrive
+mixed into a pile of alarms that do not, and after a week nobody reads
+any of them. Missing the finding is at least honest about itself.
+
+The general fracture model was tried in its place, trained on four times
+the films, and scored 0.692 on the same split. Better, and still not
+usable. The shortage is not the number of films but the number of
+fractures: about sixty in the whole collection, nine in the test split,
+which is too few to learn from and too few to measure with.
+
+The shoulder path keeps its triage model, which was measured at 0.792 on
+147 cases and says whether the shoulder looks abnormal at all. An
+abnormal shoulder reaches a doctor either way; what is lost is the word
+"fracture" on the way there.
+
+The model and its threshold stay on disk, and models/shoulder_fracture/
+test_metrics.json holds the measurement above, so this decision can be
+revisited the day there is a shoulder fracture collection worth
+retraining on.
+"""
+SHOULDER_FRACTURE_MODEL_ENABLED = False
+
 try:
+    if not SHOULDER_FRACTURE_MODEL_ENABLED:
+        raise RuntimeError(
+            "The shoulder fracture model is switched off: it scored "
+            "0.664 ROC AUC and 0.141 average precision on its own test "
+            "split, so most of what it flagged was not a fracture."
+        )
+
     if not SHOULDER_FRACTURE_MODEL_PATH.exists():
         raise FileNotFoundError(
             "Shoulder fracture model was not found at: "
@@ -923,6 +1268,148 @@ except Exception as error:
     )
 
 
+"""
+The router and the hand triage model.
+
+The upper limb pathway covers hands and wrists together, because the
+patient is never asked which of the two they photographed. Until now the
+pediatric wrist model answered both, and it cannot read a hand: over the
+hand test set it called all 35 healthy hands abnormal, and over 400 real
+hand images it returned a median 0.576 for "metal is present". A whole
+hand is not a shape it was ever shown.
+
+Measured on the same images, the two models are specialists and neither
+covers the other's region:
+
+                     on hands              on wrists
+    wrist model      normal recall 0.000   accuracy 0.841
+    hand triage      accuracy 0.824        abnormal recall 0.401
+
+So the region is decided first, by a router that separates hands from
+wrists at 98.2% on held out images, and the image then goes to whichever
+model was trained on it.
+
+The router was checked for the mistake that cost this project a chest
+model. Hands arrive as 640x640 Roboflow exports and wrists at the
+original radiograph size, so a router could reach a high score by
+reading the export pipeline instead of the anatomy. Accuracy was 0.9861
+on 640x640 images and 0.9805 on every other size: a gap of half a point,
+where a router reading the pipeline would show a large one.
+
+    models/hand_wrist_router/hand_wrist_router_model.keras
+    models/hand_triage_v2/hand_triage_v2_model.keras
+
+Both are optional. If either is missing the endpoint falls back to what
+it did before, which is the wrist model for everything.
+"""
+HAND_WRIST_ROUTER_MODEL_PATH = (
+    AI_SERVICE_DIR
+    / "models"
+    / "hand_wrist_router"
+    / "hand_wrist_router_model.keras"
+)
+
+HAND_WRIST_ROUTER_METADATA_PATH = (
+    AI_SERVICE_DIR
+    / "models"
+    / "hand_wrist_router"
+    / "router_metadata.json"
+)
+
+HAND_TRIAGE_MODEL_PATH = (
+    AI_SERVICE_DIR
+    / "models"
+    / "hand_triage_v2"
+    / "hand_triage_v2_model.keras"
+)
+
+HAND_TRIAGE_THRESHOLDS_PATH = (
+    AI_SERVICE_DIR
+    / "models"
+    / "hand_triage_v2"
+    / "hand_triage_v2_thresholds.json"
+)
+
+hand_wrist_router_model = None
+hand_wrist_router_threshold = 0.5
+hand_wrist_router_error = ""
+
+hand_triage_model = None
+hand_triage_threshold = 0.475
+hand_triage_error = ""
+
+try:
+    if HAND_WRIST_ROUTER_MODEL_PATH.exists():
+        print(
+            "Loading the hand and wrist router from:\n"
+            f"{HAND_WRIST_ROUTER_MODEL_PATH}"
+        )
+
+        hand_wrist_router_model = tf.keras.models.load_model(
+            HAND_WRIST_ROUTER_MODEL_PATH,
+            compile=False,
+        )
+
+        if HAND_WRIST_ROUTER_METADATA_PATH.exists():
+            router_metadata = read_json_file(
+                HAND_WRIST_ROUTER_METADATA_PATH
+            )
+
+            hand_wrist_router_threshold = float(
+                router_metadata.get("threshold", 0.5)
+            )
+
+        print("Hand and wrist router loaded successfully.")
+    else:
+        print(
+            "No hand and wrist router found. Every upper limb image "
+            "goes to the wrist model."
+        )
+
+except Exception as error:
+    hand_wrist_router_error = str(error)
+    hand_wrist_router_model = None
+
+    print(f"Failed to load the hand and wrist router: {error}")
+
+try:
+    if HAND_TRIAGE_MODEL_PATH.exists():
+        print(
+            "Loading the hand triage model from:\n"
+            f"{HAND_TRIAGE_MODEL_PATH}"
+        )
+
+        hand_triage_model = tf.keras.models.load_model(
+            HAND_TRIAGE_MODEL_PATH,
+            compile=False,
+        )
+
+        if HAND_TRIAGE_THRESHOLDS_PATH.exists():
+            triage_metadata = read_json_file(
+                HAND_TRIAGE_THRESHOLDS_PATH
+            )
+
+            hand_triage_threshold = float(
+                triage_metadata.get("threshold", 0.475)
+            )
+
+        print(
+            "Hand triage model loaded successfully. Threshold: "
+            f"{hand_triage_threshold}"
+        )
+    else:
+        print(
+            "No hand triage model found. Hand images go to the wrist "
+            "model, which cannot read them."
+        )
+
+except Exception as error:
+    hand_triage_error = str(error)
+    hand_triage_model = None
+
+    print(f"Failed to load the hand triage model: {error}")
+
+
 # =========================================================
 # Image helpers
 # =========================================================
@@ -960,9 +1447,7 @@ def prepare_image(
     image_bytes: bytes,
 ) -> tuple[np.ndarray, int, int]:
     try:
-        pil_image = Image.open(
-            BytesIO(image_bytes)
-        ).convert("RGB")
+        pil_image = Image.open(BytesIO(image_bytes))
 
     except UnidentifiedImageError as error:
         raise HTTPException(
@@ -970,9 +1455,53 @@ def prepare_image(
             detail="The uploaded file is not a valid image.",
         ) from error
 
+    """
+    Sixteen bit images are brought down to eight bits by scale, not by
+    clipping.
+
+    A radiograph exported from DICOM usually carries sixteen bits per
+    pixel, and Pillow reads it as mode "I;16". Asking Pillow to convert
+    that to RGB does not rescale it: every value above 255 is clipped to
+    255, and since most of a radiograph sits far above 255 the image
+    arrives at the model as a near white rectangle. Measured on the
+    wrist set, a file whose pixels average 59.8 out of 255 was reaching
+    the models as 244.7 out of 255.
+
+    Dividing by 257 maps 0-65535 onto 0-255 and matches what
+    tf.io.decode_image does, which is how every training set in this
+    project was read.
+    """
+    if pil_image.mode in ("I;16", "I;16B", "I;16L", "I;16N", "I"):
+        sixteen_bit = np.asarray(pil_image, dtype=np.float32)
+
+        if sixteen_bit.max() > 255:
+            sixteen_bit = sixteen_bit / 257.0
+
+        pil_image = Image.fromarray(
+            np.clip(sixteen_bit, 0, 255).astype(np.uint8),
+            mode="L",
+        )
+
+    pil_image = pil_image.convert("RGB")
+
     width, height = pil_image.size
 
-    resized_image = pil_image.resize(IMAGE_SIZE)
+    """
+    Resized the way every training script resizes: bilinear with
+    antialiasing, matching tf.image.resize(..., antialias=True).
+
+    Pillow's default resize uses no antialiasing, and that difference
+    alone is enough to undo a model. Measured on the 3,075 image wrist
+    test set, the served model scores 0.9037 ROC AUC on fractures when
+    the image is resized the way it was trained and 0.48, a coin toss,
+    when it is not. The pixels look the same to a person; they are not
+    the same to the network.
+    """
+    resized_image = pil_image.resize(
+        IMAGE_SIZE,
+        resample=Image.BILINEAR,
+        reducing_gap=None,
+    )
 
     image_array = np.asarray(
         resized_image,
@@ -1221,6 +1750,7 @@ def build_chest_findings_response(
     width: int,
     height: int,
     probabilities: np.ndarray,
+    triage_score: float | None = None,
 ) -> dict[str, Any]:
     all_findings: list[dict[str, Any]] = []
     detected_findings: list[dict[str, Any]] = []
@@ -1265,7 +1795,25 @@ def build_chest_findings_response(
         reverse=True,
     )
 
-    if detected_findings:
+    """
+    The triage model answers "normal or not" directly, so when it is
+    loaded it decides. The findings below still say what was seen and
+    still raise an abnormal result on their own, because a finding that
+    clears its own threshold is evidence the triage model should not be
+    allowed to overrule.
+    """
+    triage_says_normal = (
+        triage_score is not None
+        and triage_score < chest_triage_threshold
+    )
+
+    if triage_says_normal and not detected_findings:
+        triage_result = "NORMAL"
+        primary_finding = None
+        confidence = round((1.0 - triage_score) * 100, 2)
+        needs_doctor_review = False
+
+    elif detected_findings:
         triage_result = "ABNORMAL"
         primary_finding = detected_findings[0]["name"]
         confidence = float(
@@ -1541,6 +2089,8 @@ def build_upper_limb_response(
     thresholds: dict[str, float],
     model_name: str,
     model_scope: str,
+    detected_region: str = "WRIST",
+    region_note: str = "",
 ) -> dict[str, Any]:
     """
     Shared response builder for the hand and wrist pathway. It keeps the
@@ -1649,6 +2199,15 @@ def build_upper_limb_response(
             "decision threshold in this preliminary analysis."
         )
 
+    """
+    What the router saw is written into the message the doctor reads.
+    An image that shows the hand together with the wrist is answered by
+    the wrist model, and saying so is the difference between a reading
+    that looks unexplained and one the doctor can judge.
+    """
+    if region_note:
+        message = f"{message} {region_note}"
+
     return {
         "success": True,
         "fileName": image.filename,
@@ -1656,6 +2215,8 @@ def build_upper_limb_response(
         "width": width,
         "height": height,
         "bodyRegion": "HAND_WRIST",
+        "detectedRegion": detected_region,
+        "regionNote": region_note or None,
         "result": result,
         "triageResult": result,
         "confidence": round(confidence, 2),
@@ -1680,16 +2241,256 @@ def build_upper_limb_response(
     }
 
 
+"""
+How close to the cut point counts as undecided for the hand.
+
+The hand triage model separates the two classes cleanly on validation,
+where healthy hands sit around 0.24 and injured ones around 0.77, so a
+narrow band is enough. Widening it would only move confident answers
+into "uncertain", which is the fault the chest clinic already had: ten
+points there swallowed eight of twelve healthy chests.
+"""
+HAND_TRIAGE_UNCERTAINTY_MARGIN = 0.05
+
+"""
+How sure the router has to be before a hand goes to the hand model.
+
+The router is right 98.2% of the time, and the cost of its two mistakes
+is not the same. A wrist sent to the hand model loses 60% of fractures;
+a hand sent to the wrist model is called abnormal and reaches a doctor,
+which is a false alarm rather than a miss. So the hand pathway is only
+taken when the router is clearly sure, and anything in between falls
+through to the wrist model.
+"""
+HAND_ROUTING_CONFIDENCE = 0.75
+
+"""
+Where the router stops calling an image a wrist.
+
+Between this point and the hand cut point the router leans towards a
+hand without being sure of it, and that is what a radiograph showing the
+hand together with the wrist looks like to a model that was trained to
+pick one of the two. Such an image still goes to the wrist model, which
+is the safer of the two readings, but it is reported as a hand with the
+wrist rather than as a plain wrist, so nobody has to guess why the wrist
+model read an image with fingers in it.
+"""
+HAND_WITH_WRIST_LOWER_BOUND = 0.5
+
+"""
+What the doctor is told about the region the router decided on, for the
+images the wrist model answers. A plain wrist needs no note.
+"""
+UPPER_LIMB_REGION_NOTES = {
+    "HAND_WITH_WRIST": (
+        "The X-ray shows a hand together with the wrist, so it was "
+        "read by the wrist model."
+    ),
+    "HAND": (
+        "The X-ray was read as a hand, but no hand model is loaded, "
+        "so the wrist model read it instead."
+    ),
+}
+
+
+def run_hand_triage(
+    image: UploadFile,
+    image_array: np.ndarray,
+    width: int,
+    height: int,
+    router_score: float,
+) -> dict[str, Any]:
+    """
+    Answers a hand X-ray with the model trained on hands.
+
+    EfficientNet rescales pixels inside the network, so the array is
+    handed over as it is. Passing it through MobileNetV2's
+    preprocess_input, as the wrist model needs, would feed it a range it
+    never saw: the same mistake cost the chest clinic a correct reading
+    of a healthy chest until it was found.
+    """
+    model_input = np.array(image_array, dtype=np.float32, copy=True)
+
+    probability = float(
+        hand_triage_model.predict(model_input, verbose=0)[0][0]
+    )
+
+    distance = probability - hand_triage_threshold
+
+    if distance >= 0:
+        result = "ABNORMAL"
+        confidence = probability * 100
+        needs_doctor_review = True
+        priority = "NEEDS_REVIEW"
+        message = (
+            "This hand X-ray was read as abnormal in the preliminary "
+            "analysis. Doctor review is required."
+        )
+
+    elif abs(distance) <= HAND_TRIAGE_UNCERTAINTY_MARGIN:
+        result = "UNCERTAIN"
+        confidence = probability * 100
+        needs_doctor_review = True
+        priority = "NEEDS_REVIEW"
+        message = (
+            "This hand X-ray was too close to the decision threshold to "
+            "be called either way. Doctor review is required."
+        )
+
+    else:
+        result = "NORMAL"
+        confidence = (1.0 - probability) * 100
+        needs_doctor_review = False
+        priority = "ROUTINE"
+        message = (
+            "No abnormality was found in this hand X-ray in the "
+            "preliminary analysis."
+        )
+
+    return {
+        "success": True,
+        "fileName": image.filename,
+        "contentType": image.content_type,
+        "width": width,
+        "height": height,
+        "bodyRegion": "HAND_WRIST",
+        "detectedRegion": "HAND",
+        "regionNote": None,
+        "result": result,
+        "triageResult": result,
+        "confidence": round(confidence, 2),
+        "primaryFinding": None,
+        "possibleFindings": [],
+        "allFindings": [],
+        "noSupportedFindingDetected": result == "NORMAL",
+        "priority": priority,
+        "detectedClinic": "orthopedic",
+        "needsDoctorReview": needs_doctor_review,
+        "message": message,
+        "modelName": HAND_TRIAGE_MODEL_PATH.name,
+        "modelVersion": "2.0",
+        "modelScope": "HAND",
+        "abnormalityProbability": round(probability * 100, 2),
+        "decisionThreshold": round(hand_triage_threshold * 100, 2),
+        "routerConfidence": round(router_score * 100, 2),
+        "supportedLabels": [],
+        "disclaimer": (
+            "This is a preliminary AI reading of a hand radiograph. It "
+            "says whether the hand looks normal, not which injury is "
+            "present, and does not replace a radiologist's "
+            "interpretation or a doctor's final diagnosis."
+        ),
+    }
+
+
+def classify_upper_limb_region(
+    image_bytes: bytes,
+) -> dict[str, Any]:
+    """
+    Reads which region the image shows, in three answers: a hand, a hand
+    together with the wrist, or a wrist. The prepared image is returned
+    with the decision, because whichever model answers needs the same
+    array and an upload can only be read once.
+
+    The router reads greyscale, because that is what it was trained on:
+    an X-ray carries no colour, and training it on grey kept it from
+    separating the two sources by an incidental colour cast.
+    """
+    image_array, width, height = prepare_image(image_bytes)
+
+    grey = np.mean(image_array, axis=-1, keepdims=True)
+    router_input = np.repeat(grey, 3, axis=-1).astype(np.float32)
+
+    wrist_score = float(
+        hand_wrist_router_model.predict(router_input, verbose=0)[0][0]
+    )
+
+    hand_score = 1.0 - wrist_score
+
+    if hand_score >= HAND_ROUTING_CONFIDENCE:
+        region = "HAND"
+
+    elif hand_score >= HAND_WITH_WRIST_LOWER_BOUND:
+        region = "HAND_WITH_WRIST"
+
+    else:
+        region = "WRIST"
+
+    return {
+        "region": region,
+        "handScore": hand_score,
+        "imageArray": image_array,
+        "width": width,
+        "height": height,
+    }
+
+
 @app.post("/predict/hand-wrist")
 async def predict_hand_wrist(
     image: UploadFile = File(...),
 ):
     """
-    One endpoint for the whole hand and wrist pathway. It uses the
-    dedicated hand and wrist model when it is installed, and otherwise
-    falls back to the pediatric wrist findings model.
+    One endpoint for the whole hand and wrist pathway.
+
+    The image is sent to the model that was trained on the region it
+    shows. The router decides the region; if the router says hand and a
+    hand triage model is loaded, that model answers, and everything else
+    goes down the wrist pathway as before.
     """
+    image_bytes = await validate_and_read_image(image)
+
+    routing: dict[str, Any] | None = None
+
+    if hand_wrist_router_model is not None:
+        try:
+            routing = classify_upper_limb_region(image_bytes)
+
+        except HTTPException:
+            raise
+
+        except Exception as error:
+            """
+            A failure in the router must not take the endpoint down with
+            it. The wrist pathway below still answers, which is what the
+            clinic had before either model existed.
+            """
+            print(f"Upper limb routing failed, using the wrist model: {error}")
+
+            routing = None
+
+    if (
+        routing is not None
+        and routing["region"] == "HAND"
+        and hand_triage_model is not None
+    ):
+        return run_hand_triage(
+            image=image,
+            image_array=routing["imageArray"],
+            width=routing["width"],
+            height=routing["height"],
+            router_score=float(routing["handScore"]),
+        )
+
+    """
+    Everything else is read by the wrist model, and carries the region
+    the router decided on so that the reading explains itself.
+    """
+    detected_region = (
+        str(routing["region"]) if routing is not None else "WRIST"
+    )
+
     use_hand_model = hand_wrist_model is not None
+
+    """
+    A dedicated hand and wrist model covers both regions, so a hand it
+    reads needs no apology. The note about a missing hand model belongs
+    only to the pediatric wrist model, which was never trained on hands.
+    """
+    region_note = (
+        ""
+        if use_hand_model and detected_region == "HAND"
+        else UPPER_LIMB_REGION_NOTES.get(detected_region, "")
+    )
 
     active_model = (
         hand_wrist_model if use_hand_model else wrist_pediatric_model
@@ -1727,10 +2528,19 @@ async def predict_hand_wrist(
         else "PEDIATRIC_WRIST"
     )
 
-    image_bytes = await validate_and_read_image(image)
-
+    """
+    The bytes were read once at the top of the endpoint. An upload can
+    only be read once, so reading again here would hand the model an
+    empty file. When the router already prepared the image, that array
+    is reused rather than decoded a second time.
+    """
     try:
-        image_array, width, height = prepare_image(image_bytes)
+        if routing is not None:
+            image_array = routing["imageArray"]
+            width = int(routing["width"])
+            height = int(routing["height"])
+        else:
+            image_array, width, height = prepare_image(image_bytes)
 
         model_input = np.array(
             image_array,
@@ -1760,6 +2570,8 @@ async def predict_hand_wrist(
             thresholds=thresholds,
             model_name=model_name,
             model_scope=model_scope,
+            detected_region=detected_region,
+            region_note=region_note,
         )
 
     except HTTPException:
@@ -1798,11 +2610,11 @@ CLINIC_CAPABILITIES: list[dict[str, Any]] = [
         "slug": "shoulder",
         "name": "Shoulder Clinic",
         "regions": ["Shoulder"],
-        "metricsFile": "shoulder/shoulder_threshold.json",
-        "metricsFormat": "shoulder",
-        "modelFile": "shoulder/shoulder_model_finetuned.keras",
+        "metricsFile": "shoulder_triage_v4/test_metrics.json",
+        "metricsFormat": "auc",
+        "modelFile": "shoulder_triage_v4/shoulder_triage_v4_model.keras",
         "dataset": "Shoulder X-ray triage set",
-        "trainingImages": 8379,
+        "trainingImages": 3551,
     },
     {
         "slug": "hand-wrist",
@@ -1813,24 +2625,40 @@ CLINIC_CAPABILITIES: list[dict[str, Any]] = [
         "modelFile": "wrist_pediatric_findings/wrist_pediatric_findings_model.keras",
         "dataset": "GRAZPEDWRI-DX pediatric wrist",
         "trainingImages": 14000,
+        # This clinic runs two models, because one could not cover both
+        # regions. The note is shown to doctors so that nobody has to
+        # guess which model read a given study.
+        "modelNote": (
+            "Wrist images are read by a model trained on 14,000 "
+            "pediatric wrists (GRAZPEDWRI-DX), which reports individual "
+            "findings. Hand images are read by a separate model trained "
+            "on 604 hand radiographs, which reports normal or abnormal "
+            "only. A router decides which of the two the image shows, "
+            "and is correct on 98.2% of held out images."
+        ),
     },
     {
         "slug": "lower-limb",
-        "name": "Leg, Knee & Foot Clinic",
-        "regions": ["Leg, Knee & Foot"],
-        "metricsFile": "lower_limb_findings/test_metrics.json",
+        "name": "Leg & Foot Clinic",
+        "regions": ["Leg & Foot"],
+        # The metrics are the ones measured on the leg test split, not
+        # on the whole BTXRD test split the model was also scored on:
+        # what the doctor is told has to describe the images this
+        # clinic actually sends it. The wider numbers are kept beside
+        # them in test_metrics_all_regions.json.
+        "metricsFile": "btxrd_lesion_all/test_metrics.json",
         "metricsFormat": "auc",
-        "modelFile": "lower_limb_findings/lower_limb_findings_model.keras",
-        "dataset": "BTXRD lower limb subset",
-        "trainingImages": 2467,
+        "modelFile": "btxrd_lesion_all/btxrd_lesion_all_model.keras",
+        "dataset": "BTXRD, every region",
+        "trainingImages": 2604,
     },
     {
         "slug": "spine",
         "name": "Spine Clinic",
         "regions": ["Spine"],
-        "metricsFile": "spine_findings/test_metrics.json",
+        "metricsFile": "spine_findings_v3/test_metrics.json",
         "metricsFormat": "auc",
-        "modelFile": "spine_findings/spine_findings_model.keras",
+        "modelFile": "spine_findings_v3/spine_findings_v3_model.keras",
         "dataset": "Cervical Spine X-ray Atlas",
         "trainingImages": 4963,
     },
@@ -1838,23 +2666,13 @@ CLINIC_CAPABILITIES: list[dict[str, Any]] = [
         "slug": "pelvis",
         "name": "Pelvis & Hip Clinic",
         "regions": ["Pelvis & Hip"],
-        "metricsFile": (
-            "_experimental/pelvis_hip_findings/test_metrics.json"
-        ),
+        "metricsFile": "pelvis_hip_findings/test_metrics.json",
         "metricsFormat": "auc",
-        "modelFile": None,
+        "modelFile": (
+            "pelvis_hip_findings/pelvis_hip_findings_model.keras"
+        ),
         "dataset": "BTXRD pelvis subset",
         "trainingImages": 228,
-    },
-    {
-        "slug": "head",
-        "name": "Head & Skull Clinic",
-        "regions": ["Head & Skull"],
-        "metricsFile": None,
-        "metricsFormat": None,
-        "modelFile": None,
-        "dataset": None,
-        "trainingImages": 0,
     },
 ]
 
@@ -2187,62 +3005,21 @@ def load_region_model(region_key: str) -> dict[str, Any]:
     return entry
 
 
-def build_region_response(
-    image: UploadFile,
-    width: int,
-    height: int,
-    definition: dict[str, Any],
-    probabilities: np.ndarray | None,
+def assemble_findings(
     labels: list[str],
+    probabilities: np.ndarray,
     thresholds: dict[str, float],
-    model_name: str | None,
-    disabled_labels: list[str] | None = None,
-) -> dict[str, Any]:
+    skipped: set[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
     """
-    Builds the same payload shape the other endpoints return. When no
-    model is installed the region reports NOT_ANALYZED and asks for a
-    doctor review, instead of guessing a finding.
+    Turns the raw probabilities of a model into the findings list the
+    application reads, and reports whether anything landed just under
+    its threshold.
+
+    The X-ray models and the volumetric ones share this step, so a
+    finding is described the same way whichever kind of study produced
+    it and only the wording around it differs.
     """
-    skipped = set(disabled_labels or [])
-    display_name = str(definition["displayName"])
-
-    base = {
-        "success": True,
-        "fileName": image.filename,
-        "contentType": image.content_type,
-        "width": width,
-        "height": height,
-        "bodyRegion": str(definition["bodyRegion"]),
-        "detectedClinic": str(definition["clinic"]),
-        "modelVersion": "1.0",
-    }
-
-    if probabilities is None:
-        return {
-            **base,
-            "result": "NOT_ANALYZED",
-            "triageResult": "NOT_ANALYZED",
-            "confidence": 0.0,
-            "primaryFinding": None,
-            "possibleFindings": [],
-            "allFindings": [],
-            "noSupportedFindingDetected": True,
-            "priority": "NEEDS_REVIEW",
-            "needsDoctorReview": True,
-            "modelAvailable": False,
-            "modelName": None,
-            "supportedLabels": [],
-            "message": (
-                f"No AI model is installed for {display_name} X-rays "
-                "yet, so the image was sent directly to the specialist "
-                "doctor for review."
-            ),
-            "disclaimer": (
-                "This image was not analysed by AI. The diagnosis "
-                "comes from the reviewing doctor."
-            ),
-        }
-
     all_findings: list[dict[str, Any]] = []
     detected_findings: list[dict[str, Any]] = []
     near_threshold = False
@@ -2297,6 +3074,73 @@ def build_region_response(
         )
     )
 
+    return all_findings, detected_findings, near_threshold
+
+
+def build_region_response(
+    image: UploadFile,
+    width: int,
+    height: int,
+    definition: dict[str, Any],
+    probabilities: np.ndarray | None,
+    labels: list[str],
+    thresholds: dict[str, float],
+    model_name: str | None,
+    disabled_labels: list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    Builds the same payload shape the other endpoints return. When no
+    model is installed the region reports NOT_ANALYZED and asks for a
+    doctor review, instead of guessing a finding.
+    """
+    skipped = set(disabled_labels or [])
+    display_name = str(definition["displayName"])
+
+    base = {
+        "success": True,
+        "fileName": image.filename,
+        "contentType": image.content_type,
+        "width": width,
+        "height": height,
+        "bodyRegion": str(definition["bodyRegion"]),
+        "detectedClinic": str(definition["clinic"]),
+        "modelVersion": "1.0",
+    }
+
+    if probabilities is None:
+        return {
+            **base,
+            "scopeNote": None,
+            "result": "NOT_ANALYZED",
+            "triageResult": "NOT_ANALYZED",
+            "confidence": 0.0,
+            "primaryFinding": None,
+            "possibleFindings": [],
+            "allFindings": [],
+            "noSupportedFindingDetected": True,
+            "priority": "NEEDS_REVIEW",
+            "needsDoctorReview": True,
+            "modelAvailable": False,
+            "modelName": None,
+            "supportedLabels": [],
+            "message": (
+                f"No AI model is installed for {display_name} X-rays "
+                "yet, so the image was sent directly to the specialist "
+                "doctor for review."
+            ),
+            "disclaimer": (
+                "This image was not analysed by AI. The diagnosis "
+                "comes from the reviewing doctor."
+            ),
+        }
+
+    all_findings, detected_findings, near_threshold = assemble_findings(
+        labels=labels,
+        probabilities=probabilities,
+        thresholds=thresholds,
+        skipped=skipped,
+    )
+
     detected_codes = {
         str(item["code"]) for item in detected_findings
     }
@@ -2344,8 +3188,18 @@ def build_region_response(
             "decision threshold in this preliminary analysis."
         )
 
+    """
+    A model that covers less than the clinic it serves says so in every
+    answer it gives, whatever the result was.
+    """
+    scope_note = str(definition.get("scopeNote") or "")
+
+    if scope_note:
+        message = f"{message} {scope_note}"
+
     return {
         **base,
+        "scopeNote": scope_note or None,
         "result": result,
         "triageResult": result,
         "confidence": round(confidence, 2),
@@ -2676,6 +3530,1326 @@ def list_regions():
 
 
 # =========================================================
+# Volumetric studies
+# =========================================================
+
+"""
+Registry of the volumetric models.
+
+Everything above this line reads a single film. A CT or an MRI is a
+stack of slices, and a finding that hides between two of them is only
+visible when the stack is read as one body, which is what these models
+do.
+
+The contract is the one the X-ray regions already follow: a region
+listed here is reachable from the application today, and a region
+without a trained model answers NOT_ANALYZED and sends the study
+straight to the specialist rather than inventing a finding. Training a
+model activates it without a code change:
+
+    models/<folder>/<folder>_model.keras
+    models/<folder>/<folder>_thresholds.json
+
+The thresholds file is the one scripts/train_region_3d.py writes, and
+its volumeShape decides what every upload is resampled to, so a model
+trained on 64 cubed volumes starts reading them at 64 cubed the moment
+it is dropped in.
+
+`window` is the Hounsfield range a CT is clipped to before it is read,
+the same range a radiologist sets on the screen: air and lung sit low,
+bone sits high, and a single range for both would flatten one of them.
+
+`acceptsRawScan` is False for a model that was trained on shapes rather
+than on images: the adrenal and the vessel sets hold segmentation masks,
+two values and nothing between them, so a scan straight from a scanner
+is unlike anything those models have seen. They still answer, and the
+answer is confident and meaningless, which is the worst way for a model
+to fail. They stay reachable for demonstration and are kept out of the
+patient upload list, because a patient cannot produce a segmentation.
+
+One trained model is deliberately absent from this table. The organ
+model in models/abdomen_3d_organ3d names the body part in a volume, it
+does not read a finding, and every answer it gives would arrive here as
+an abnormality called "Organ Liver". It stays available for training and
+for routing work, and out of the doctor's report.
+"""
+VOLUME_MODEL_REGISTRY: dict[str, dict[str, Any]] = {
+    "chest-ct-lungs": {
+        "displayName": "Chest CT (Lungs)",
+        "bodyRegion": "CHEST",
+        "clinic": "chest",
+        "modality": "CT",
+        "folder": "chest_3d_mosmed",
+        "window": (-1000.0, 400.0),
+        # Kept out of the patient upload list.
+        #
+        # Measured on its own test split it reaches 0.756 ROC AUC, and
+        # on four samples with known answers it missed both ill patients
+        # and raised one false alarm. The cause is not the threshold,
+        # which has already been retuned for recall: it is that the
+        # model was trained on 200 volumes, and 200 whole chest scans
+        # are not enough to learn what involvement looks like.
+        #
+        # A model that sends half of the ill home reading NORMAL is
+        # worse for them than no model, because the answer arrives with
+        # a number beside it and reads like an examination. The chest is
+        # covered by the nodule model at 0.908 and by the X-ray models
+        # at 0.88 to 0.90, so nothing is lost by leaving it here for
+        # demonstration and out of the list a patient chooses from.
+        "acceptsRawScan": False,
+        # The one model here that reads a whole study. It was trained on
+        # entire chest scans from the MosMed collection rather than on a
+        # crop somebody had already centred on the finding, so unlike
+        # its neighbours below it can be handed a scan as it arrives.
+        "scopeNote": (
+            "This model reads a whole chest CT and answers how much of "
+            "the lung is involved. It was trained on COVID era scans, "
+            "so it reports involvement rather than naming its cause."
+        ),
+    },
+    "chest-ct": {
+        "displayName": "Chest CT",
+        "bodyRegion": "CHEST",
+        "clinic": "chest",
+        "modality": "CT",
+        "folder": "chest_3d_nodule3d",
+        "window": (-1000.0, 400.0),
+        # Trained on nodule volumes cut out of LIDC-IDRI chest CT, so it
+        # reads one nodule at a time. A whole chest scan resampled down
+        # to the model's size loses the nodule entirely, which is why
+        # this is stated in every answer rather than left to be assumed.
+        "scopeNote": (
+            "This model reads a volume cropped around a single lung "
+            "nodule and answers whether that nodule looks malignant. It "
+            "does not search a whole chest scan for nodules."
+        ),
+    },
+    "chest-ct-ribs": {
+        "displayName": "Rib CT",
+        "bodyRegion": "CHEST",
+        "clinic": "chest",
+        "modality": "CT",
+        # The 64 voxel model, not the 28 voxel one it replaced. Trained
+        # on the same studies at four times the resolution per side,
+        # and measured on the same test split:
+        #
+        #                        28 cubed   64 cubed
+        #   displaced fracture     0.821      0.862
+        #   buckle fracture        0.694      0.722
+        #   nondisplaced           0.658      0.696
+        #
+        # Every type improved, and the largest gain went to the type
+        # that matters most. A rib fracture is a few voxels wide, which
+        # is why resolution buys more here than anywhere else in the
+        # project. The 28 voxel model stays in models/chest_3d_fracture3d
+        # so the two can be compared again.
+        "folder": "chest_3d_fracture3d_64",
+        "window": (-200.0, 1500.0),
+        # Every volume in the training set held a fracture, so the model
+        # was never shown an intact rib and cannot say that one is
+        # intact. It sorts a fracture that is already known to be there.
+        "scopeNote": (
+            "This model reads a volume cropped around a known rib "
+            "fracture and sorts which kind it is. It cannot tell an "
+            "intact rib from a broken one."
+        ),
+    },
+    "abdomen-ct": {
+        "displayName": "Abdomen CT",
+        "bodyRegion": "ABDOMEN",
+        "clinic": "general",
+        "modality": "CT",
+        "folder": "abdomen_3d_adrenal3d",
+        "acceptsRawScan": False,
+        "window": (-150.0, 250.0),
+        # Checked against the prepared volumes: they hold two values,
+        # nothing and something. This model was trained on the shape of
+        # an adrenal gland cut out of a CT, not on the greyscale of the
+        # CT itself, so a scan handed to it straight from a scanner is
+        # nothing like what it has seen. It needs a segmentation of the
+        # gland as its input, which is why that is said here rather
+        # than left for a doctor to discover from a wrong answer.
+        "scopeNote": (
+            "This model reads the shape of an already segmented adrenal "
+            "gland, not a CT scan itself, and answers whether that "
+            "gland carries a mass. Handing it a scan straight from the "
+            "scanner gives an answer that means nothing."
+        ),
+    },
+    "head-mri": {
+        "displayName": "Head MRI",
+        "bodyRegion": "HEAD",
+        "clinic": "head",
+        "modality": "MRI",
+        "folder": "head_3d_brain_tumour",
+        # Magnetic resonance carries no Hounsfield scale, so the range
+        # is taken from the study itself rather than from a fixed pair
+        # of numbers.
+        "window": None,
+        # Every study this was trained on held a glioma, so it is not
+        # answering whether there is a tumour. It answers whether the
+        # tumour takes up contrast, which is what separates a high
+        # grade glioma from a low grade one, and it is the reason the
+        # finding is treated as urgent.
+        "scopeNote": (
+            "This model reads a post contrast brain MRI of a known "
+            "tumour and answers whether the tumour enhances. It cannot "
+            "tell a brain with a tumour from one without."
+        ),
+    },
+    "head-mra": {
+        "displayName": "Head MRA",
+        "bodyRegion": "HEAD",
+        "clinic": "head",
+        "modality": "MRA",
+        "folder": "head_3d_vessel3d",
+        "acceptsRawScan": False,
+        # Magnetic resonance carries no Hounsfield scale, so the window
+        # is taken from the volume itself rather than from a fixed pair
+        # of numbers.
+        "window": None,
+        # The same holds here, and more strongly: these volumes are
+        # vessel surfaces reconstructed from MRA and then voxelised, so
+        # the model reads a shape and has never seen magnetic resonance
+        # greyscale at all.
+        "scopeNote": (
+            "This model reads the reconstructed shape of a single brain "
+            "vessel, not an MRA scan itself, and answers whether that "
+            "vessel carries an aneurysm. Handing it a scan straight "
+            "from the scanner gives an answer that means nothing."
+        ),
+    },
+    # The remaining regions have no public volumetric dataset small
+    # enough to train from here yet, so they are registered without a
+    # model: the application can already send them, and each answers
+    # NOT_ANALYZED until scripts/prepare_3d_data.py --dataset nifti is
+    # pointed at a clinical collection and the model is trained.
+    # The tumour models built from the Medical Segmentation Decathlon.
+    # Each reads a volume cut around one organ and answers whether a
+    # tumour is in it. They are registered before they are trained: a
+    # region without a model answers NOT_ANALYZED and sends the study
+    # to the specialist, and starts reading the day the model lands in
+    # its folder.
+    "chest-ct-tumour": {
+        "displayName": "Lung Tumour CT",
+        "bodyRegion": "CHEST",
+        "clinic": "chest",
+        "modality": "CT",
+        "folder": "chest_3d_lung_tumour",
+        "window": (-1000.0, 400.0),
+        "scopeNote": (
+            "This model reads a volume cut around part of a lung and "
+            "answers whether a tumour is inside it."
+        ),
+    },
+    "abdomen-ct-colon": {
+        "displayName": "Colon CT",
+        "bodyRegion": "ABDOMEN",
+        "clinic": "general",
+        "modality": "CT",
+        "folder": "abdomen_3d_colon_tumour",
+        "window": (-150.0, 250.0),
+        "scopeNote": (
+            "This model reads a volume cut around part of the colon and "
+            "answers whether a cancer is inside it."
+        ),
+    },
+    "abdomen-ct-liver-vessels": {
+        "displayName": "Liver Vessels CT",
+        "bodyRegion": "ABDOMEN",
+        "clinic": "general",
+        "modality": "CT",
+        "folder": "abdomen_3d_hepatic_vessel_tumour",
+        "window": (-150.0, 250.0),
+        "scopeNote": (
+            "This model reads a volume cut around the vessels of the "
+            "liver and answers whether a tumour is inside it."
+        ),
+    },
+    "abdomen-ct-pancreas": {
+        "displayName": "Pancreas CT",
+        "bodyRegion": "ABDOMEN",
+        "clinic": "general",
+        "modality": "CT",
+        "folder": "abdomen_3d_pancreas_tumour",
+        "window": (-150.0, 250.0),
+        "scopeNote": (
+            "This model reads a volume cut around the pancreas and "
+            "answers whether a tumour is inside it."
+        ),
+    },
+    "abdomen-ct-liver": {
+        "displayName": "Liver CT",
+        "bodyRegion": "ABDOMEN",
+        "clinic": "general",
+        "modality": "CT",
+        "folder": "abdomen_3d_liver_tumour",
+        "window": (-150.0, 250.0),
+        "scopeNote": (
+            "This model reads a volume cut around the liver and answers "
+            "whether a tumour is inside it. It learned from twenty "
+            "studies and scores 0.61 on its own test split, which is "
+            "close to a coin toss. Read it as a reason to look at the "
+            "liver yourself, never as a finding: it misses tumours "
+            "about as often as it catches them."
+        ),
+    },
+    # Added from the M3D-Seg collections, which publish each organ as
+    # its own small archive. A kidney with its tumours cost under a
+    # gigabyte where the Decathlon wanted twenty nine for the liver.
+    "abdomen-ct-kidney": {
+        "displayName": "Kidney CT",
+        "bodyRegion": "ABDOMEN",
+        "clinic": "general",
+        "modality": "CT",
+        "folder": "abdomen_3d_kidney_tumour",
+        "window": (-150.0, 250.0),
+        "scopeNote": (
+            "This model reads a volume cut around a kidney and answers "
+            "whether a tumour is inside it."
+        ),
+    },
+    "spine-ct": {
+        "displayName": "Spine CT",
+        "bodyRegion": "SPINE",
+        "clinic": "spine",
+        "modality": "CT",
+        "folder": "spine_3d_nifti",
+        "window": (-200.0, 1500.0),
+    },
+    "pelvis-ct": {
+        "displayName": "Pelvis & Hip CT",
+        "bodyRegion": "PELVIS_HIP",
+        "clinic": "orthopedic",
+        "modality": "CT",
+        "folder": "pelvis_3d_nifti",
+        "window": (-200.0, 1500.0),
+    },
+    "lower-limb-ct": {
+        "displayName": "Lower Limb CT",
+        "bodyRegion": "LOWER_LIMB",
+        "clinic": "orthopedic",
+        "modality": "CT",
+        "folder": "lower_limb_3d_nifti",
+        "window": (-200.0, 1500.0),
+    },
+    "shoulder-ct": {
+        "displayName": "Shoulder CT",
+        "bodyRegion": "SHOULDER",
+        "clinic": "orthopedic",
+        "modality": "CT",
+        "folder": "shoulder_3d_nifti",
+        "window": (-200.0, 1500.0),
+    },
+}
+
+"""
+Loaded volumetric models, filled on the first request of each region.
+"""
+volume_model_cache: dict[str, dict[str, Any]] = {}
+
+DEFAULT_VOLUME_SHAPE = (28, 28, 28)
+
+"""
+A volume is a stack of hundreds of slices, so the twenty megabyte limit
+of a single film would reject nearly every real study.
+"""
+MAX_VOLUME_FILE_SIZE = 300 * 1024 * 1024
+
+"""
+What a volumetric study may arrive as.
+
+The first three are research formats, and they are what every dataset
+this project trains on is written in. The last two are what a hospital
+actually sends: a DICOM file per slice, and a folder of them zipped up.
+A system that reads only the research formats can be trained but never
+installed.
+"""
+ALLOWED_VOLUME_SUFFIXES = (
+    ".nii",
+    ".nii.gz",
+    ".npy",
+    ".dcm",
+    ".zip",
+)
+
+
+def load_volume_model(region_key: str) -> dict[str, Any]:
+    """
+    Loads the volumetric model of one region on first use and remembers
+    the result, the same way the X-ray regions are loaded.
+    """
+    cached = volume_model_cache.get(region_key)
+
+    definition = VOLUME_MODEL_REGISTRY[region_key]
+    folder = str(definition["folder"])
+
+    model_path = (
+        AI_SERVICE_DIR / "models" / folder / f"{folder}_model.keras"
+    )
+
+    thresholds_path = (
+        AI_SERVICE_DIR / "models" / folder / f"{folder}_thresholds.json"
+    )
+
+    """
+    A cached model is kept only while its thresholds file is unchanged.
+
+    A threshold is the one part of a model that is meant to move without
+    retraining: scripts/retune_3d_thresholds.py exists to move it when a
+    clinic decides the model is answering too loudly or too quietly.
+    Caching the model and its thresholds together, and never looking at
+    the file again, meant a retuned threshold reached nobody until
+    somebody remembered to restart the service. Comparing the timestamp
+    costs one stat call per request and makes the file the truth.
+    """
+    if cached is not None and cached["model"] is not None:
+        try:
+            unchanged = (
+                cached.get("thresholdsAt")
+                == thresholds_path.stat().st_mtime
+            )
+        except OSError:
+            unchanged = False
+
+        if unchanged:
+            return cached
+
+        print(
+            f"{definition['displayName']} thresholds changed on disk, "
+            "reading them again."
+        )
+
+    entry: dict[str, Any] = {
+        "model": None,
+        "labels": [],
+        "thresholds": {},
+        "disabledLabels": [],
+        "volumeShape": DEFAULT_VOLUME_SHAPE,
+        "window": None,
+        "modelPath": model_path,
+        "error": "",
+    }
+
+    """
+    A missing model is not cached as a final answer: a newly trained
+    model must be picked up without restarting the service.
+    """
+    if not model_path.exists() or not thresholds_path.exists():
+        volume_model_cache[region_key] = entry
+        return entry
+
+    if (
+        cached is not None
+        and cached.get("failedAt") == model_path.stat().st_mtime
+    ):
+        return cached
+
+    try:
+        print(
+            f"Loading {definition['displayName']} model from:\n"
+            f"{model_path}"
+        )
+
+        model = tf.keras.models.load_model(model_path, compile=False)
+        metadata = read_json_file(thresholds_path)
+
+        raw_labels = metadata.get("labels")
+        raw_thresholds = metadata.get("thresholds", {})
+
+        if not isinstance(raw_labels, list) or not raw_labels:
+            raise ValueError(
+                f"{definition['displayName']} labels are missing."
+            )
+
+        labels = [str(label) for label in raw_labels]
+        thresholds: dict[str, float] = {}
+
+        for label in labels:
+            threshold = float(
+                raw_thresholds.get(label, DEFAULT_FINDING_THRESHOLD)
+                if isinstance(raw_thresholds, dict)
+                else DEFAULT_FINDING_THRESHOLD
+            )
+
+            if not 0.0 < threshold < 1.0:
+                threshold = DEFAULT_FINDING_THRESHOLD
+
+            thresholds[label] = threshold
+
+        output_size = int(model.output_shape[-1])
+
+        if output_size != len(labels):
+            raise ValueError(
+                f"{definition['displayName']} model output size does "
+                "not match the thresholds file. "
+                f"Model outputs: {output_size}, "
+                f"labels: {len(labels)}"
+            )
+
+        """
+        The shape the uploaded study is resampled to is read from the
+        model itself, so the two can never drift apart. The thresholds
+        file records it as well, and is used when a saved model does not
+        carry a fixed input shape.
+        """
+        input_shape = model.input_shape
+
+        if isinstance(input_shape, list):
+            input_shape = input_shape[0]
+
+        shape_from_model = [
+            int(value) for value in input_shape[1:4] if value
+        ]
+
+        if len(shape_from_model) == 3:
+            volume_shape = tuple(shape_from_model)
+        else:
+            recorded = metadata.get("volumeShape")
+            volume_shape = (
+                tuple(int(value) for value in recorded)
+                if isinstance(recorded, list) and len(recorded) == 3
+                else DEFAULT_VOLUME_SHAPE
+            )
+
+        """
+        The training run records the Hounsfield window its volumes were
+        clipped to. A model served a different window than it was
+        trained on sees numbers it has never met, so the recorded window
+        wins over the one in the registry above.
+        """
+        recorded_window = metadata.get("huWindow")
+
+        if isinstance(recorded_window, list) and len(recorded_window) == 2:
+            low, high = (float(value) for value in recorded_window)
+
+            if low < high:
+                entry["window"] = (low, high)
+
+        disabled = metadata.get("disabledLabels")
+        entry["disabledLabels"] = (
+            [str(name) for name in disabled]
+            if isinstance(disabled, list)
+            else []
+        )
+
+        entry["model"] = model
+        entry["labels"] = labels
+        entry["thresholds"] = thresholds
+        entry["volumeShape"] = volume_shape
+        entry["thresholdsAt"] = thresholds_path.stat().st_mtime
+
+        print(
+            f"{definition['displayName']} model loaded successfully. "
+            f"Volume shape: {volume_shape}"
+        )
+
+    except Exception as error:
+        entry["error"] = str(error)
+        entry["failedAt"] = model_path.stat().st_mtime
+        print(
+            f"Failed to load the {definition['displayName']} model: "
+            f"{error}"
+        )
+
+    volume_model_cache[region_key] = entry
+    return entry
+
+
+async def validate_and_read_volume(study: UploadFile) -> bytes:
+    """
+    A volume arrives as a file rather than as a picture, so it is
+    checked by its name: browsers report no useful content type for a
+    NIfTI upload.
+    """
+    file_name = (study.filename or "").lower()
+
+    if not file_name.endswith(ALLOWED_VOLUME_SUFFIXES):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only NIfTI volumes (.nii, .nii.gz) and prepared .npy "
+                "volumes are supported."
+            ),
+        )
+
+    payload = await study.read()
+
+    if not payload:
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded study is empty.",
+        )
+
+    if len(payload) > MAX_VOLUME_FILE_SIZE:
+        raise HTTPException(
+            status_code=400,
+            detail="The study must be smaller than 300 MB.",
+        )
+
+    return payload
+
+
+def resample_volume(
+    volume: np.ndarray,
+    target_shape: tuple[int, int, int],
+) -> np.ndarray:
+    """
+    Brings a study of any slice count down to the one shape the model
+    was trained on.
+    """
+    if tuple(volume.shape) == tuple(target_shape):
+        return volume
+
+    try:
+        from scipy import ndimage
+    except ImportError as error:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Volumetric studies need SciPy. Install it with "
+                "pip install scipy."
+            ),
+        ) from error
+
+    factors = [
+        target / max(current, 1)
+        for target, current in zip(target_shape, volume.shape)
+    ]
+    resized = ndimage.zoom(volume, factors, order=1)
+
+    """
+    Rounding inside the resampling can leave a voxel of slack, so the
+    result is trimmed or padded to the exact shape the model expects.
+    """
+    fixed = np.zeros(target_shape, dtype=np.float32)
+    cut = tuple(
+        slice(0, min(target, current))
+        for target, current in zip(target_shape, resized.shape)
+    )
+    fixed[cut] = resized[cut]
+    return fixed
+
+
+def read_dicom_series(payload: bytes, is_zip: bool) -> np.ndarray:
+    """
+    Rebuilds a volume out of what a hospital sends.
+
+    A CT does not leave a scanner as one file. It leaves as one DICOM
+    per slice, each carrying where in the patient it was taken, and the
+    volume only exists once they are stacked back in that order. Three
+    things have to go right for the result to mean anything.
+
+    The slices are ordered by their position in the patient rather than
+    by file name or by instance number. Exported folders arrive sorted
+    by neither, and a stack assembled in the wrong order is anatomy that
+    never existed.
+
+    Only one series is kept. A single study routinely holds a scan
+    before contrast and after it, a scout view, and a screenshot of the
+    radiologist's measurements, all in one folder. Stacking them
+    together would interleave different scans into one volume, so the
+    longest series wins and the rest are left alone.
+
+    The stored numbers are turned into Hounsfield units. DICOM keeps
+    pixels as small integers and carries the slope and intercept needed
+    to recover the real scale, and without applying them a window meant
+    for bone lands somewhere meaningless.
+    """
+    try:
+        import pydicom
+    except ImportError as error:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "DICOM studies need pydicom. Install it with "
+                "pip install pydicom."
+            ),
+        ) from error
+
+    datasets = []
+
+    if is_zip:
+        import zipfile
+
+        try:
+            with zipfile.ZipFile(BytesIO(payload)) as bundle:
+                names = [
+                    name
+                    for name in bundle.namelist()
+                    if not name.endswith("/")
+                    and not name.split("/")[-1].startswith(".")
+                ]
+
+                for name in names:
+                    try:
+                        datasets.append(
+                            pydicom.dcmread(
+                                BytesIO(bundle.read(name)),
+                                force=True,
+                            )
+                        )
+                    except Exception:
+                        """
+                        A zip of a study carries readme files and
+                        viewer settings beside the slices. Anything
+                        that is not a DICOM is skipped rather than
+                        failing the upload.
+                        """
+                        continue
+        except zipfile.BadZipFile as error:
+            raise HTTPException(
+                status_code=400,
+                detail="The uploaded file is not a readable zip archive.",
+            ) from error
+    else:
+        try:
+            datasets.append(
+                pydicom.dcmread(BytesIO(payload), force=True)
+            )
+        except Exception as error:
+            raise HTTPException(
+                status_code=400,
+                detail="The uploaded file is not a readable DICOM file.",
+            ) from error
+
+    datasets = [
+        dataset
+        for dataset in datasets
+        if hasattr(dataset, "pixel_array") or "PixelData" in dataset
+    ]
+
+    if not datasets:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No image was found in the upload. A DICOM study needs "
+                "the slice files themselves, not only a report."
+            ),
+        )
+
+    """
+    A study holds several series, and only one of them is the scan the
+    model should read.
+    """
+    by_series: dict[str, list] = {}
+
+    for dataset in datasets:
+        key = str(getattr(dataset, "SeriesInstanceUID", "unknown"))
+        by_series.setdefault(key, []).append(dataset)
+
+    chosen = max(by_series.values(), key=len)
+
+    def slice_position(dataset) -> float:
+        """
+        Where in the patient this slice was taken.
+
+        The patient position is the truthful answer and is used when it
+        is there. Instance number is a fallback: it usually agrees, and
+        when it does not the scan was exported in a way this cannot
+        rescue anyway.
+        """
+        position = getattr(dataset, "ImagePositionPatient", None)
+
+        if position is not None and len(position) == 3:
+            return float(position[2])
+
+        return float(getattr(dataset, "InstanceNumber", 0) or 0)
+
+    chosen.sort(key=slice_position)
+
+    slices = []
+
+    for dataset in chosen:
+        try:
+            pixels = dataset.pixel_array.astype(np.float32)
+        except Exception:
+            continue
+
+        """
+        A single file can hold the whole scan rather than one slice,
+        which is how an ultrasound loop and some MRI exports arrive.
+        """
+        if pixels.ndim == 3:
+            slices.extend(list(pixels))
+            continue
+
+        if pixels.ndim != 2:
+            continue
+
+        slope = float(getattr(dataset, "RescaleSlope", 1) or 1)
+        intercept = float(getattr(dataset, "RescaleIntercept", 0) or 0)
+        slices.append(pixels * slope + intercept)
+
+    if not slices:
+        raise HTTPException(
+            status_code=400,
+            detail="The DICOM files carried no readable image data.",
+        )
+
+    """
+    Slices of one series share a size. A study that mixes sizes was
+    assembled from more than one scan, and the majority size is kept so
+    a stray screenshot cannot decide the shape of the volume.
+    """
+    shapes = [item.shape for item in slices]
+    common = max(set(shapes), key=shapes.count)
+    slices = [item for item in slices if item.shape == common]
+
+    return np.stack(slices).astype(np.float32)
+
+
+def prepare_volume(
+    file_name: str,
+    payload: bytes,
+    target_shape: tuple[int, int, int],
+    window: tuple[float, float] | None,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """
+    Reads an uploaded study and returns it in the shape and the value
+    range scripts/prepare_3d_data.py produced for training.
+
+    A CT is stored in Hounsfield units, a scale that runs from air at
+    -1000 past dense bone, and a raw scale like that lets the metal of
+    an implant dominate every filter. The volume is therefore clipped to
+    the window of its region first, exactly as a radiologist sets the
+    window before looking. A study that carries no such scale, an MRI
+    above all, is stretched between its own darkest and brightest voxel
+    instead.
+    """
+    lowered = file_name.lower()
+
+    if lowered.endswith((".dcm", ".zip")):
+        volume = read_dicom_series(
+            payload,
+            is_zip=lowered.endswith(".zip"),
+        )
+    elif lowered.endswith(".npy"):
+        try:
+            volume = np.load(BytesIO(payload), allow_pickle=False)
+        except Exception as error:
+            raise HTTPException(
+                status_code=400,
+                detail="The uploaded .npy file could not be read.",
+            ) from error
+    else:
+        try:
+            import nibabel
+        except ImportError as error:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "NIfTI studies need nibabel. Install it with "
+                    "pip install nibabel."
+                ),
+            ) from error
+
+        import tempfile
+
+        suffix = ".nii.gz" if lowered.endswith(".nii.gz") else ".nii"
+
+        """
+        nibabel reads from a path, and the suffix is what tells it
+        whether the bytes are compressed, so the upload is written out
+        under its own suffix and removed again.
+        """
+        with tempfile.NamedTemporaryFile(
+            suffix=suffix,
+            delete=False,
+        ) as handle:
+            handle.write(payload)
+            temporary_path = handle.name
+
+        try:
+            image = nibabel.load(temporary_path)
+            volume = np.asarray(image.dataobj, dtype=np.float32)
+        except Exception as error:
+            raise HTTPException(
+                status_code=400,
+                detail="The uploaded file is not a readable NIfTI volume.",
+            ) from error
+        finally:
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
+
+    volume = np.asarray(volume, dtype=np.float32)
+
+    if volume.ndim == 4:
+        volume = volume[..., 0]
+
+    if volume.ndim != 3:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The uploaded study is not a 3D volume. Its shape is "
+                f"{tuple(int(value) for value in volume.shape)}."
+            ),
+        )
+
+    original_shape = tuple(int(value) for value in volume.shape)
+
+    """
+    A prepared volume already carries the eight bit range the training
+    set used, so it is passed through untouched. Anything else is
+    windowed here.
+    """
+    already_prepared = (
+        float(volume.min()) >= 0.0 and float(volume.max()) <= 255.0
+    )
+
+    if not already_prepared:
+        if window is not None:
+            low, high = window
+        else:
+            low = float(volume.min())
+            high = float(volume.max())
+
+        volume = np.clip(volume, low, high)
+        volume = (volume - low) / max(high - low, 1e-6)
+        volume = volume * 255.0
+
+    volume = resample_volume(volume, target_shape)
+    volume = np.clip(volume, 0.0, 255.0).astype(np.float32)
+
+    metadata = {
+        "originalShape": list(original_shape),
+        "sliceCount": original_shape[0],
+        "analysedShape": [int(value) for value in target_shape],
+        "windowed": not already_prepared,
+    }
+
+    return volume, metadata
+
+
+def run_volume_model(
+    entry: dict[str, Any],
+    volume: np.ndarray,
+) -> np.ndarray:
+    """
+    Runs one loaded volumetric model and returns its raw probabilities.
+    The scaling to zero and one lives inside the saved model, so the
+    volume is handed over in the same byte range it was trained on.
+    """
+    model_input = volume[np.newaxis, ..., np.newaxis]
+    prediction = entry["model"].predict(model_input, verbose=0)
+    return np.array(prediction[0], dtype=np.float32)
+
+
+def build_volume_response(
+    study: UploadFile,
+    definition: dict[str, Any],
+    probabilities: np.ndarray | None,
+    labels: list[str],
+    thresholds: dict[str, float],
+    model_name: str | None,
+    volume_metadata: dict[str, Any] | None = None,
+    disabled_labels: list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    Builds the payload shape every other endpoint returns, so a
+    volumetric study travels through the application on the same rails
+    as a radiograph and nothing downstream has to learn a second format.
+    """
+    skipped = set(disabled_labels or [])
+    display_name = str(definition["displayName"])
+    modality = str(definition.get("modality") or "CT")
+
+    base = {
+        "success": True,
+        "fileName": study.filename,
+        "contentType": study.content_type,
+        "bodyRegion": str(definition["bodyRegion"]),
+        "detectedClinic": str(definition["clinic"]),
+        "studyKind": "VOLUME",
+        "modality": modality,
+        "modelVersion": "1.0",
+        **(volume_metadata or {}),
+    }
+
+    if probabilities is None:
+        return {
+            **base,
+            "scopeNote": None,
+            "result": "NOT_ANALYZED",
+            "triageResult": "NOT_ANALYZED",
+            "confidence": 0.0,
+            "primaryFinding": None,
+            "possibleFindings": [],
+            "allFindings": [],
+            "noSupportedFindingDetected": True,
+            "priority": "NEEDS_REVIEW",
+            "needsDoctorReview": True,
+            "modelAvailable": False,
+            "modelName": None,
+            "supportedLabels": [],
+            "message": (
+                f"No AI model is installed for {display_name} studies "
+                "yet, so the study was sent directly to the specialist "
+                "doctor for review."
+            ),
+            "disclaimer": (
+                "This study was not analysed by AI. The diagnosis "
+                "comes from the reviewing doctor."
+            ),
+        }
+
+    all_findings, detected_findings, near_threshold = assemble_findings(
+        labels=labels,
+        probabilities=probabilities,
+        thresholds=thresholds,
+        skipped=skipped,
+    )
+
+    detected_codes = {str(item["code"]) for item in detected_findings}
+
+    if detected_findings:
+        result = "ABNORMAL"
+        primary_finding = detected_findings[0]["name"]
+        confidence = float(detected_findings[0]["probability"])
+        needs_doctor_review = True
+        priority = (
+            "URGENT"
+            if detected_codes & URGENT_REGION_CODES
+            else "NEEDS_REVIEW"
+        )
+        message = (
+            f"{primary_finding} was detected in the {display_name} "
+            "study. Doctor review is required."
+        )
+
+    elif near_threshold:
+        result = "UNCERTAIN"
+        primary_finding = None
+        confidence = float(
+            all_findings[0]["probability"] if all_findings else 0.0
+        )
+        needs_doctor_review = True
+        priority = "NEEDS_REVIEW"
+        message = (
+            f"No {display_name} finding clearly exceeded its decision "
+            "threshold, but at least one result was close. Doctor "
+            "review is required."
+        )
+
+    else:
+        result = "NORMAL"
+        primary_finding = None
+        highest_probability = float(
+            all_findings[0]["probability"] if all_findings else 0.0
+        )
+        confidence = max(0.0, 100.0 - highest_probability)
+        needs_doctor_review = False
+        priority = "ROUTINE"
+        message = (
+            f"No supported {display_name} finding exceeded its "
+            "decision threshold in this preliminary analysis."
+        )
+
+    """
+    A model that covers less than the study it was handed says so in
+    every answer it gives. It matters more here than on a single film:
+    these models read a cropped part of a scan, and a doctor who assumed
+    the whole scan had been searched would be trusting an answer that
+    was never given.
+    """
+    scope_note = str(definition.get("scopeNote") or "")
+
+    if scope_note:
+        message = f"{message} {scope_note}"
+
+    return {
+        **base,
+        "scopeNote": scope_note or None,
+        "result": result,
+        "triageResult": result,
+        "confidence": round(confidence, 2),
+        "primaryFinding": primary_finding,
+        "possibleFindings": detected_findings,
+        "allFindings": all_findings,
+        "noSupportedFindingDetected": not detected_findings,
+        "priority": priority,
+        "needsDoctorReview": needs_doctor_review,
+        "modelAvailable": True,
+        "modelName": model_name,
+        "supportedLabels": [
+            label for label in labels if label not in skipped
+        ],
+        "message": message,
+        "disclaimer": (
+            f"These are preliminary AI findings for {display_name} "
+            "studies with a limited supported label set. They do not "
+            "replace a radiologist's interpretation or a doctor's final "
+            "diagnosis."
+        ),
+    }
+
+
+@app.post("/predict/volume/{region_key}")
+async def predict_volume(
+    region_key: str,
+    study: UploadFile = File(...),
+):
+    """
+    One endpoint for every volumetric study. The region decides which
+    model runs and which clinic receives the case.
+    """
+    definition = VOLUME_MODEL_REGISTRY.get(region_key)
+
+    if definition is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Unknown volumetric region: {region_key}. Supported "
+                f"regions: {', '.join(VOLUME_MODEL_REGISTRY)}"
+            ),
+        )
+
+    payload = await validate_and_read_volume(study)
+
+    try:
+        entry = load_volume_model(region_key)
+
+        if entry["model"] is None:
+            return build_volume_response(
+                study=study,
+                definition=definition,
+                probabilities=None,
+                labels=[],
+                thresholds={},
+                model_name=None,
+            )
+
+        volume, volume_metadata = prepare_volume(
+            file_name=study.filename or "",
+            payload=payload,
+            target_shape=entry["volumeShape"],
+            window=entry.get("window") or definition.get("window"),
+        )
+
+        return build_volume_response(
+            study=study,
+            definition=definition,
+            probabilities=run_volume_model(entry, volume),
+            labels=entry["labels"],
+            thresholds=entry["thresholds"],
+            model_name=entry["modelPath"].name,
+            volume_metadata=volume_metadata,
+            disabled_labels=entry.get("disabledLabels"),
+        )
+
+    except HTTPException:
+        raise
+
+    except Exception as error:
+        print(f"{region_key} volume prediction error: {error}")
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"The {definition['displayName']} analysis failed."
+            ),
+        ) from error
+
+
+@app.post("/render/volume")
+async def render_volume(study: UploadFile = File(...)):
+    """
+    Turns an uploaded volume into something a browser can show.
+
+    A doctor handed a .nii.gz has a file they cannot open: no browser
+    draws a stack of slices, and asking a radiologist to install a
+    viewer to read a case is asking them not to read it. The service
+    already knows how to read every format the clinic sends, so it does
+    the drawing here and returns one PNG holding every slice in a grid.
+
+    One image rather than one request per slice, because a chest CT is
+    hundreds of slices and a page that fetches them one at a time spends
+    its first ten seconds on network round trips. The grid is drawn once
+    and the viewer cuts it up on a canvas, which is instant.
+
+    The volume is NOT resampled to a model's input size here. This is
+    what the scan looks like, not what a model was fed, and shrinking it
+    to 64 voxels would show the doctor a blur the patient never had.
+    """
+    payload = await validate_and_read_volume(study)
+    file_name = (study.filename or "").lower()
+
+    try:
+        if file_name.endswith((".dcm", ".zip")):
+            volume = read_dicom_series(
+                payload,
+                is_zip=file_name.endswith(".zip"),
+            )
+        elif file_name.endswith(".npy"):
+            volume = np.load(BytesIO(payload), allow_pickle=False)
+        else:
+            import tempfile
+
+            import nibabel
+
+            suffix = ".nii.gz" if file_name.endswith(".nii.gz") else ".nii"
+
+            with tempfile.NamedTemporaryFile(
+                suffix=suffix,
+                delete=False,
+            ) as handle:
+                handle.write(payload)
+                temporary_path = handle.name
+
+            try:
+                image = nibabel.load(temporary_path)
+                volume = np.asarray(image.dataobj, dtype=np.float32)
+            finally:
+                try:
+                    os.unlink(temporary_path)
+                except OSError:
+                    pass
+
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(
+            status_code=400,
+            detail="This study could not be read for viewing.",
+        ) from error
+
+    volume = np.asarray(volume, dtype=np.float32)
+
+    if volume.ndim == 4:
+        volume = volume[..., 0]
+
+    if volume.ndim != 3:
+        raise HTTPException(
+            status_code=400,
+            detail="This file is not a 3D volume.",
+        )
+
+    """
+    Stretched between its own darkest and brightest voxel, which is what
+    a radiologist does with the window control before reading. A CT left
+    on its raw Hounsfield range comes out as a flat grey rectangle.
+    """
+    low = float(np.percentile(volume, 1))
+    high = float(np.percentile(volume, 99))
+
+    if high - low < 1e-6:
+        low, high = float(volume.min()), float(volume.max())
+
+    scaled = np.clip((volume - low) / max(high - low, 1e-6), 0.0, 1.0)
+    scaled = (scaled * 255.0).astype(np.uint8)
+
+    depth, height, width = scaled.shape
+
+    """
+    A tall stack is thinned rather than drawn whole. Six hundred slices
+    at full size is a sixty megabyte image, and a doctor scrolling
+    through it cannot see the difference between slice 300 and 301
+    anyway. Every slice is kept up to the cap; past it they are sampled
+    evenly so the first and last are always among them.
+    """
+    maximum_slices = 160
+    if depth > maximum_slices:
+        indices = np.linspace(0, depth - 1, maximum_slices).astype(int)
+    else:
+        indices = np.arange(depth)
+
+    """
+    Long thin slices are shrunk so the grid stays inside what a browser
+    will hold as one texture.
+    """
+    tile = 256
+    scale = min(1.0, tile / max(height, width))
+    tile_height = max(1, int(round(height * scale)))
+    tile_width = max(1, int(round(width * scale)))
+
+    columns = int(np.ceil(np.sqrt(len(indices))))
+    rows = int(np.ceil(len(indices) / columns))
+
+    sheet = Image.new(
+        "L",
+        (columns * tile_width, rows * tile_height),
+        color=0,
+    )
+
+    for position, index in enumerate(indices):
+        frame = Image.fromarray(scaled[int(index)], mode="L")
+
+        if (tile_width, tile_height) != (width, height):
+            frame = frame.resize(
+                (tile_width, tile_height),
+                Image.BILINEAR,
+            )
+
+        sheet.paste(
+            frame,
+            (
+                (position % columns) * tile_width,
+                (position // columns) * tile_height,
+            ),
+        )
+
+    buffer = BytesIO()
+    sheet.save(buffer, format="PNG", optimize=True)
+
+    """
+    The layout travels in the headers rather than in a second request,
+    so the viewer knows how to cut the sheet up the moment the image
+    arrives.
+    """
+    return Response(
+        content=buffer.getvalue(),
+        media_type="image/png",
+        headers={
+            "X-Slice-Count": str(len(indices)),
+            "X-Slice-Columns": str(columns),
+            "X-Slice-Rows": str(rows),
+            "X-Tile-Width": str(tile_width),
+            "X-Tile-Height": str(tile_height),
+            "X-Original-Depth": str(depth),
+        },
+    )
+
+
+@app.get("/volumes")
+def list_volume_regions():
+    """
+    Tells the application which volumetric studies can be sent and which
+    of them already have a trained model behind them.
+    """
+    volumes = []
+
+    for region_key, definition in VOLUME_MODEL_REGISTRY.items():
+        entry = load_volume_model(region_key)
+
+        volumes.append(
+            {
+                "region": region_key,
+                "displayName": definition["displayName"],
+                "bodyRegion": definition["bodyRegion"],
+                "clinic": definition["clinic"],
+                "modality": definition.get("modality"),
+                "endpoint": f"/predict/volume/{region_key}",
+                "accepts": list(ALLOWED_VOLUME_SUFFIXES),
+                "modelAvailable": entry["model"] is not None,
+                "acceptsRawScan": bool(
+                    definition.get("acceptsRawScan", True)
+                ),
+                "labels": entry["labels"],
+                "volumeShape": list(entry["volumeShape"]),
+                "window": list(
+                    entry.get("window") or definition.get("window") or []
+                ),
+                "scopeNote": definition.get("scopeNote"),
+                "error": entry["error"],
+            }
+        )
+
+    return {"success": True, "volumes": volumes}
+
+
+# =========================================================
 # General routes
 # =========================================================
 
@@ -2922,11 +5096,34 @@ async def predict_chest_findings(
             image_array
         )
 
+        triage_score = None
+
+        if chest_triage_model is not None:
+            """
+            The two chest models want different input. The findings model
+            is an EfficientNet, which carries its own rescaling and takes
+            the raw 0 to 255 values prepare_image returns. The triage
+            model is a MobileNetV2 and was trained on preprocess_input
+            output, so it is scaled here. Feeding it the raw array
+            returns a confident answer that means nothing.
+            """
+            triage_input = tf.keras.applications.mobilenet_v2.preprocess_input(
+                image_array.copy()
+            )
+
+            triage_score = float(
+                chest_triage_model.predict(
+                    triage_input,
+                    verbose=0,
+                )[0][0]
+            )
+
         return build_chest_findings_response(
             image=image,
             width=width,
             height=height,
             probabilities=probabilities,
+            triage_score=triage_score,
         )
 
     except HTTPException:
@@ -3118,24 +5315,42 @@ async def predict_shoulder(
                 )
 
             elif uncertain_fracture:
+                """
+                The fracture model is reported, never allowed to
+                overturn the triage decision.
+
+                Its middle band runs from 0.145 to 0.80, and measured
+                over the 762 image test set every single image fell
+                inside it, including all 615 normal shoulders. Nothing
+                scored above 0.80 and nothing below 0.145. A band that
+                catches everything says nothing, so a normal shoulder
+                was reported as uncertain every time.
+
+                The triage model is the one trained and measured for
+                this question, so it keeps the decision. The fracture
+                probability still travels in the response for the doctor
+                to see.
+                """
                 response["primaryFinding"] = (
                     "Uncertain fracture finding"
                 )
-                response["needsDoctorReview"] = True
-                response["priority"] = "NEEDS_REVIEW"
-                response["detectedClinic"] = "orthopedic"
-
-                if response.get("result") == "NORMAL":
-                    response["result"] = "UNCERTAIN"
 
                 response["triageResult"] = response["result"]
-                response["confidence"] = round(
-                    fracture_probability * 100,
-                    2,
+
+                """
+                The confidence and the message follow the triage
+                decision, not the fracture model. Reporting the fracture
+                probability as the confidence of a normal result told
+                the patient a number that answers a different question.
+                """
+                response["priority"] = (
+                    "NEEDS_REVIEW"
+                    if response["needsDoctorReview"]
+                    else "ROUTINE"
                 )
-                response["message"] = (
-                    "The fracture result is uncertain. "
-                    "Doctor review is required."
+                response["message"] = create_result_message(
+                    response["result"],
+                    "SHOULDER",
                 )
 
             else:
