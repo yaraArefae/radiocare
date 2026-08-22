@@ -1,6 +1,38 @@
-fastapi
-nibabel
-pillow
-python-multipart
-scipy
-uvicorn[standard]
+# Everything the AI service and its training scripts need.
+#
+# Versions are pinned because the models were saved by these ones. A
+# Keras model written by 3.15 is not guaranteed to load in an older
+# release, and a clone that installs "tensorflow" unpinned will one day
+# get a version that refuses the .keras files committed beside it.
+#
+#   python -m venv .venv
+#   .venv/Scripts/pip install -r requirements.txt      (Windows)
+#   .venv/bin/pip install -r requirements.txt          (Linux, macOS)
+
+# ---- The service ------------------------------------------------------
+fastapi==0.139.0
+uvicorn[standard]==0.51.0
+python-multipart==0.0.32
+
+# ---- Running the models -----------------------------------------------
+# tensorflow was missing from this file until now, so a fresh clone
+# installed the web server and none of the machine learning, and every
+# prediction failed on the first import.
+tensorflow==2.21.0
+keras==3.15.0
+h5py==3.14.0
+numpy==2.5.1
+
+# ---- Reading medical images -------------------------------------------
+# nibabel reads the .nii.gz volumes, pydicom reads a DICOM series, and
+# pillow reads the X-rays.
+nibabel==5.4.2
+pydicom==3.0.2
+pillow==12.3.0
+
+# ---- Preparing data and measuring models ------------------------------
+# scipy also unpacks the sparse segmentation masks that M3D-Seg ships.
+pandas==3.0.5
+scipy==1.18.0
+scikit-learn==1.9.0
+matplotlib==3.11.1
