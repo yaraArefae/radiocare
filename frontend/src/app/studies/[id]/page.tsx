@@ -1,6 +1,7 @@
 "use client";
 import CaseChat from "@/components/CaseChat";
 import CaseReport from "@/components/CaseReport";
+import VolumeViewer from "@/components/VolumeViewer";
 import NotificationBell from "@/components/NotificationBell";
 import StudyAppointment from "@/components/StudyAppointment";
 import Link from "next/link";
@@ -25,6 +26,14 @@ type AiDetailsPayload = {
   detectedRegion?: string;
   detectedClinic?: string;
   message?: string;
+  /*
+    Present only when the study was read by a model that answers normal
+    or abnormal without naming a finding, which is why its finding lists
+    are empty. Older studies were saved before these were stored and do
+    not carry them.
+  */
+  abnormalityProbability?: number;
+  decisionThreshold?: number;
 };
 
 type StudyDetails = {
@@ -37,6 +46,13 @@ type StudyDetails = {
   bodyRegion?: string;
   imagingView?: string;
   view?: string;
+  /*
+    "VOLUME" for a CT or MRI stack, "IMAGE" for a single film. A volume
+    cannot be drawn in an image tag, so the page has to know which of
+    the two it was handed before it tries.
+  */
+  studyKind?: string | null;
+  originalFileName?: string | null;
   priority?: string;
   status?: string;
   clinicalNotes?: string | null;
@@ -89,6 +105,31 @@ function formatProbability(
   probability: number,
 ) {
   return `${Number(probability).toFixed(2)}%`;
+}
+
+/*
+  Region codes come from the AI service, and the doctor reads them. The
+  hand and wrist clinic has three of them, because its router separates
+  a hand from a wrist and reports a film that shows both as a hand with
+  the wrist. A code that is not listed is shown as it arrived.
+*/
+const REGION_LABELS: Record<string, string> = {
+  HAND: "Hand",
+  WRIST: "Wrist",
+  HAND_WITH_WRIST: "Hand with wrist",
+  HAND_WRIST: "Hand & Wrist",
+  CHEST: "Chest",
+  SHOULDER: "Shoulder",
+  SPINE: "Spine",
+  PELVIS_HIP: "Pelvis & Hip",
+  LOWER_LIMB: "Lower Limb",
+};
+
+function formatRegion(region: string) {
+  return (
+    REGION_LABELS[region.toUpperCase()] ??
+    region
+  );
 }
 
 const BACKEND_URL =
@@ -230,17 +271,38 @@ export default function StudyDetailsPage() {
     aiDetails?.allFindings ??
     [];
 
+  /*
+    A reading that carries a score but no findings came from a model
+    that answers normal or abnormal without naming a finding. It has to
+    be shown differently: telling the doctor that "no supported finding
+    exceeded its threshold" would describe a search that never happened.
+  */
+  const abnormalityProbability =
+    aiDetails?.abnormalityProbability;
+
+  const decisionThreshold =
+    aiDetails?.decisionThreshold;
+
+  const isTriageOnlyReading =
+    possibleFindings.length === 0 &&
+    allFindings.length === 0 &&
+    abnormalityProbability !== undefined;
+
   const aiPriority =
     study.aiPriority ??
     aiDetails?.aiPriority ??
     study.priority ??
     "ROUTINE";
 
-  const detectedRegion =
+  const detectedRegionCode =
     study.detectedRegion ??
     aiDetails?.detectedRegion ??
     study.bodyRegion ??
-    "—";
+    "";
+
+  const detectedRegion = detectedRegionCode
+    ? formatRegion(detectedRegionCode)
+    : "—";
 
   const detectedClinic =
     study.detectedClinic ??
@@ -264,6 +326,9 @@ export default function StudyDetailsPage() {
     study.imagingView ??
     study.view ??
     "X-ray";
+
+  const isVolumeStudy =
+    study.studyKind === "VOLUME";
 
   const resultStyle =
     triageResult === "NORMAL"
@@ -324,11 +389,40 @@ export default function StudyDetailsPage() {
         <div className="mt-7 grid gap-7 lg:grid-cols-[1.1fr_0.9fr]">
           <section className="rounded-3xl border border-white/20 bg-white/[0.07] p-6 shadow-xl backdrop-blur-2xl">
             <h2 className="text-2xl font-black text-white">
-              X-ray Image
+              {isVolumeStudy ? "Imaging Study" : "X-ray Image"}
             </h2>
 
             <div className="mt-5 flex min-h-[500px] items-center justify-center overflow-hidden rounded-3xl border border-white/15 bg-black/30 p-4">
-              {!imageFailed ? (
+              {/*
+                A CT or an MRI is a stack of slices in a single file. No
+                browser draws one, so it is offered as a download for
+                the viewer the doctor already reads studies in, instead
+                of an image tag that could only ever fail.
+              */}
+              {isVolumeStudy ? (
+                <div className="w-full">
+                  <VolumeViewer studyId={study.id} />
+
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs text-slate-500">
+                      {study.originalFileName}
+                    </p>
+
+                    {/*
+                      The file is still offered. A radiologist with
+                      their own viewer wants the original, and this one
+                      shows the slices rather than replacing the tools
+                      they measure with.
+                    */}
+                    <a
+                      href={`${BACKEND_URL}/api/studies/${study.id}/image`}
+                      className="text-xs font-bold text-cyan-300 underline"
+                    >
+                      Download the original file
+                    </a>
+                  </div>
+                </div>
+              ) : !imageFailed ? (
                 <img
                   src={`${BACKEND_URL}/api/studies/${study.id}/image`}
                   alt={`X-ray study ${study.id}`}
@@ -453,6 +547,38 @@ export default function StudyDetailsPage() {
                 />
               </div>
 
+              {isTriageOnlyReading ? (
+                <div className="mt-6">
+                  <h3 className="text-lg font-black text-white">
+                    Abnormality score
+                  </h3>
+
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <p className="text-3xl font-black text-white">
+                        {abnormalityProbability?.toFixed(
+                          1,
+                        )}
+                        %
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        decides at{" "}
+                        {decisionThreshold?.toFixed(1) ??
+                          "50.0"}
+                        %
+                      </p>
+                    </div>
+
+                    <p className="mt-3 text-sm leading-6 text-slate-300">
+                      This study was read by a model that
+                      reports whether it looks normal or
+                      abnormal. It does not name a
+                      specific finding, so there is no
+                      finding list for this reading.
+                    </p>
+                  </div>
+                </div>
+              ) : (
               <div className="mt-6">
                 <h3 className="text-lg font-black text-white">
                   Findings above decision thresholds
@@ -479,6 +605,7 @@ export default function StudyDetailsPage() {
                   </div>
                 )}
               </div>
+              )}
 
               {allFindings.length > 0 && (
                 <div className="mt-6">
