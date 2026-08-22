@@ -1,0 +1,27 @@
+{
+  "hand_abnormality": {
+    "threshold": 0.05,
+    "roc_auc": 0.8493197278911565,
+    "accuracy": 0.7058823529411765,
+    "normal_recall": 0.8285714285714286,
+    "abnormal_recall": 0.6547619047619048,
+    "test_positive_count": 84,
+    "test_negative_count": 35
+  },
+  "atFixedHalf": {
+    "accuracy": 0.37815126050420167,
+    "normal_recall": 1.0,
+    "abnormal_recall": 0.11904761904761904
+  },
+  "byPictureStyle": {
+    "screenshot": {
+      "count": 41,
+      "accuracy": 0.7560975609756098
+    },
+    "other": {
+      "count": 78,
+      "accuracy": 0.6794871794871795
+    },
+    "gap": 0.07661038148843025
+  }
+}

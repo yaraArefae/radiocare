@@ -255,10 +255,20 @@ def build_model(positive_weights) -> tuple[tf.keras.Model, tf.keras.Model]:
 def tune_thresholds(
     y_true: np.ndarray,
     y_score: np.ndarray,
+    min_precision: float | None = None,
 ) -> dict[str, float]:
     """
     Picks the threshold with the best F1 score per label, which suits an
     imbalanced medical dataset better than a fixed 0.5.
+
+    The best F1 alone can still ship an operating point where most of
+    the alarms are false: on the cervical spine set it gave kyphosis a
+    cut point with 66 false alarms against 58 true ones, because F1
+    rewards the recall those false alarms buy. When a minimum precision
+    is asked for, only the cut points that reach it on the validation
+    split are considered, and the best F1 among them is taken. A label
+    that cannot reach the bar at all keeps its best F1 point, since a
+    threshold of 0.95 would silence it completely.
     """
     thresholds: dict[str, float] = {}
 
@@ -278,10 +288,33 @@ def tune_thresholds(
             np.maximum(precision + recall, 1e-9),
         )
 
-        best_index = int(np.nanargmax(f1_scores[:-1]))
+        """
+        The last entry of a precision recall curve is the point where
+        recall is zero, and it has no cut off, so it is dropped.
+        """
+        candidates = f1_scores[:-1]
+
+        if min_precision is not None:
+            reachable = precision[:-1] >= min_precision
+
+            if reachable.any():
+                candidates = np.where(reachable, candidates, np.nan)
+            else:
+                print(
+                    f"{label}: no cut off reaches precision "
+                    f"{min_precision:.2f}, keeping the best F1 point."
+                )
+
+        best_index = int(np.nanargmax(candidates))
         best_threshold = float(cut_offs[best_index])
         thresholds[label] = float(
             min(0.95, max(0.05, best_threshold))
+        )
+
+        print(
+            f"{label}: threshold {thresholds[label]:.4f} "
+            f"(validation precision {precision[best_index]:.2f}, "
+            f"recall {recall[best_index]:.2f})"
         )
 
     return thresholds
@@ -308,6 +341,16 @@ def main() -> None:
     )
     parser.add_argument("--stage1-epochs", type=int, default=8)
     parser.add_argument("--stage2-epochs", type=int, default=5)
+    parser.add_argument(
+        "--min-precision",
+        type=float,
+        default=None,
+        help=(
+            "Lowest precision a threshold may have on the validation "
+            "split. Without it the best F1 point is taken, which can "
+            "ship a finding whose alarms are mostly false."
+        ),
+    )
     arguments = parser.parse_args()
 
     global LABELS
@@ -438,7 +481,11 @@ def main() -> None:
     print("\n=== Tuning the thresholds on the validation split ===")
     val_scores = model.predict(val_ds, verbose=0)
     val_truth = val_df[LABELS].to_numpy(dtype=np.float32)
-    thresholds = tune_thresholds(val_truth, val_scores)
+    thresholds = tune_thresholds(
+        val_truth,
+        val_scores,
+        min_precision=arguments.min_precision,
+    )
 
     print("\n=== Test results ===")
     test_scores = model.predict(test_ds, verbose=0)

@@ -1,0 +1,11 @@
+{
+  "hand_abnormality": {
+    "threshold": 0.55,
+    "roc_auc": 0.8945578231292517,
+    "accuracy": 0.7899159663865546,
+    "normal_recall": 0.7428571428571429,
+    "abnormal_recall": 0.8095238095238095,
+    "test_positive_count": 84,
+    "test_negative_count": 35
+  }
+}

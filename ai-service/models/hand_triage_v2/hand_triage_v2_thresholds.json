@@ -1,0 +1,10 @@
+{
+  "threshold": 0.55,
+  "positiveClass": "ABNORMAL",
+  "classNames": [
+    "NORMAL",
+    "ABNORMAL"
+  ],
+  "thresholdRule": "Chosen on the validation split. At 0.475 the model cleared 81.8% of healthy hands; at 0.55 it clears 87.9% while still finding 86.5% of the abnormal ones. Above 0.55 the healthy share stops improving and the abnormal one collapses.",
+  "previousThreshold": 0.475
+}

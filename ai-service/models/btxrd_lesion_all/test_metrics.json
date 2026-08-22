@@ -1,0 +1,29 @@
+{
+  "bone_lesion": {
+    "threshold": 0.411483,
+    "roc_auc": 0.9006,
+    "average_precision": 0.9208,
+    "precision": 0.8073,
+    "recall": 0.8502,
+    "false_positive_count": 42,
+    "test_positive_count": 207
+  },
+  "benign_lesion": {
+    "threshold": 0.479051,
+    "roc_auc": 0.8582,
+    "average_precision": 0.849,
+    "precision": 0.7746,
+    "recall": 0.6471,
+    "false_positive_count": 32,
+    "test_positive_count": 170
+  },
+  "malignant_lesion": {
+    "threshold": 0.928552,
+    "roc_auc": 0.9134,
+    "average_precision": 0.6739,
+    "precision": 0.5455,
+    "recall": 0.6486,
+    "false_positive_count": 20,
+    "test_positive_count": 37
+  }
+}

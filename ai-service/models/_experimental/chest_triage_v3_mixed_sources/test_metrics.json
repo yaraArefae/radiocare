@@ -1,0 +1,15 @@
+{
+  "chest_abnormality": {
+    "threshold": 0.9,
+    "roc_auc": 0.9717389875082183,
+    "accuracy": 0.8974358974358975,
+    "normal_recall": 0.8102564102564103,
+    "abnormal_recall": 0.9846153846153847,
+    "test_positive_count": 390
+  },
+  "atFixedHalf": {
+    "accuracy": 0.8487179487179487,
+    "normal_recall": 0.7051282051282052,
+    "abnormal_recall": 0.9923076923076923
+  }
+}

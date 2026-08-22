@@ -1,0 +1,9 @@
+{
+  "fracture_visible": {
+    "threshold": 0.5,
+    "roc_auc": 0.6642,
+    "average_precision": 0.1411,
+    "test_positive_count": 9,
+    "scored_rows": 142
+  }
+}

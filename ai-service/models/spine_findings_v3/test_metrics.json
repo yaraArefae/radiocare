@@ -1,0 +1,29 @@
+{
+  "loss_of_lordosis": {
+    "threshold": 0.4387,
+    "roc_auc": 0.9255,
+    "average_precision": 0.9616,
+    "precision": 0.8456,
+    "recall": 0.9258,
+    "false_positive_count": 82,
+    "test_positive_count": 485
+  },
+  "sigmoid_curvature": {
+    "threshold": 0.265342,
+    "roc_auc": 0.6758,
+    "average_precision": 0.2975,
+    "precision": 0.2906,
+    "recall": 0.7867,
+    "false_positive_count": 288,
+    "test_positive_count": 150
+  },
+  "cervical_kyphosis": {
+    "threshold": 0.707994,
+    "roc_auc": 0.9451,
+    "average_precision": 0.7036,
+    "precision": 0.7424,
+    "recall": 0.6364,
+    "false_positive_count": 17,
+    "test_positive_count": 77
+  }
+}

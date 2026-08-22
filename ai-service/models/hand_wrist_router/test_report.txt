@@ -1,0 +1,8 @@
+              precision    recall  f1-score   support
+
+        HAND     0.9741    0.9912    0.9826       114
+       WRIST     0.9909    0.9732    0.9820       112
+
+    accuracy                         0.9823       226
+   macro avg     0.9825    0.9822    0.9823       226
+weighted avg     0.9824    0.9823    0.9823       226

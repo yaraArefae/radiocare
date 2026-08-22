@@ -1,0 +1,17 @@
+{
+  "labels": [
+    "bone_lesion",
+    "benign_lesion",
+    "malignant_lesion"
+  ],
+  "thresholds": {
+    "bone_lesion": 0.41148343682289124,
+    "benign_lesion": 0.4790514409542084,
+    "malignant_lesion": 0.9285516738891602
+  },
+  "thresholdRule": "Best F1 on the validation split among the cut offs that reach the precision floor of the label.",
+  "precisionFloor": {
+    "bone_lesion": 0.8,
+    "benign_lesion": 0.8
+  }
+}

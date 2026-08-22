@@ -1,0 +1,30 @@
+{
+  "labels": [
+    "loss_of_lordosis",
+    "sigmoid_curvature",
+    "cervical_kyphosis"
+  ],
+  "thresholds": {
+    "loss_of_lordosis": 0.4386998116970062,
+    "sigmoid_curvature": 0.26534244418144226,
+    "cervical_kyphosis": 0.7079944014549255
+  },
+  "grades": [
+    "lordotic",
+    "straight",
+    "sigmoid",
+    "kyphotic"
+  ],
+  "thresholdRule": "Best F1 on the validation split among the cut offs that reach the precision floor of the label.",
+  "disabledLabels": [
+    "sigmoid_curvature"
+  ],
+  "disabledReason": {
+    "sigmoid_curvature": "Measured ROC AUC 0.68 on the test split. It is the grade the model confuses most, and no cut off reaches 0.70 precision on validation."
+  },
+  "precisionFloor": {
+    "loss_of_lordosis": 0.85,
+    "sigmoid_curvature": 0.7,
+    "cervical_kyphosis": 0.7
+  }
+}

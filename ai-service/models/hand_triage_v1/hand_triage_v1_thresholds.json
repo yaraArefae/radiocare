@@ -1,0 +1,8 @@
+{
+  "threshold": 0.05,
+  "positiveClass": "ABNORMAL",
+  "classNames": [
+    "NORMAL",
+    "ABNORMAL"
+  ]
+}

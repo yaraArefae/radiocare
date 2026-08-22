@@ -1,0 +1,21 @@
+{
+  "threshold": 0.5,
+  "classNames": [
+    "HAND",
+    "WRIST"
+  ],
+  "positiveClass": "WRIST",
+  "accuracy": 0.9823008849557522,
+  "handRecall": 0.9912280701754386,
+  "wristRecall": 0.9732142857142857,
+  "bySize": {
+    "640x640": {
+      "count": 72,
+      "accuracy": 0.9861111111111112
+    },
+    "other sizes": {
+      "count": 154,
+      "accuracy": 0.9805194805194806
+    }
+  }
+}

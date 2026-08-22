@@ -1,0 +1,19 @@
+{
+  "labels": [
+    "loss_of_lordosis",
+    "sigmoid_curvature",
+    "cervical_kyphosis"
+  ],
+  "thresholds": {
+    "loss_of_lordosis": 0.22494588792324066,
+    "sigmoid_curvature": 0.5062515735626221,
+    "cervical_kyphosis": 0.9379932880401611
+  },
+  "thresholdRule": "Best F1 on the validation split among the cut offs whose precision reaches 0.70.",
+  "disabledLabels": [
+    "sigmoid_curvature"
+  ],
+  "disabledReason": {
+    "sigmoid_curvature": "Measured ROC AUC 0.64 on the test split, close to chance, and no cut off reaches 0.70 precision on validation."
+  }
+}

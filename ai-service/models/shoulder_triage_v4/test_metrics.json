@@ -1,0 +1,15 @@
+{
+  "shoulder_abnormality": {
+    "threshold": 0.57,
+    "roc_auc": 0.7765831535866379,
+    "accuracy": 0.6968503937007874,
+    "normal_recall": 0.6943089430894309,
+    "abnormal_recall": 0.7074829931972789,
+    "test_positive_count": 147
+  },
+  "atFixedHalf": {
+    "accuracy": 0.6456692913385826,
+    "normal_recall": 0.6130081300813008,
+    "abnormal_recall": 0.782312925170068
+  }
+}

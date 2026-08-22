@@ -1,0 +1,20 @@
+{
+  "bone_lesion": {
+    "threshold": 0.37126,
+    "roc_auc": 0.8717,
+    "average_precision": 0.8812,
+    "test_positive_count": 294
+  },
+  "benign_lesion": {
+    "threshold": 0.289757,
+    "roc_auc": 0.8283,
+    "average_precision": 0.7974,
+    "test_positive_count": 238
+  },
+  "malignant_lesion": {
+    "threshold": 0.95,
+    "roc_auc": 0.8913,
+    "average_precision": 0.6384,
+    "test_positive_count": 56
+  }
+}
