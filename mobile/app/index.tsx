@@ -16,7 +16,7 @@ import { Button, Card, Field, Label, Muted, Notice, Row, Screen, Title } from ".
 /*
   Sign in, and the fork in the road after it.
 
-  The three roles do not share a home screen, so this is where the
+  The four roles do not share a home screen, so this is where the
   application decides which one the account belongs to - the same rule
   the website applies, read from the same session.
 */
@@ -34,6 +34,12 @@ export default function SignInScreen() {
 
     if (roles.includes("admin")) return router.replace("/admin");
     if (roles.includes("doctor")) return router.replace("/doctor");
+    /*
+      A secretary has one screen: the calendar of the doctor she works
+      for. She was landing on the patient home before this, which is
+      not hers and shows her nothing she can act on.
+    */
+    if (roles.includes("secretary")) return router.replace("/secretary");
 
     return router.replace("/patient");
   }
@@ -186,6 +192,18 @@ export default function SignInScreen() {
             />
           </View>
         </Row>
+
+        {/*
+          A secretary applies the same way a doctor does. There was no
+          route in for her at all before this: the role existed, the
+          accounts existed, and the only way to get one was for an
+          administrator to type it in.
+        */}
+        <Button
+          label="I am applying to be a secretary"
+          kind="ghost"
+          onPress={() => router.push("/request/secretary")}
+        />
       </Card>
 
       <Muted>Server: {backendUrl}</Muted>

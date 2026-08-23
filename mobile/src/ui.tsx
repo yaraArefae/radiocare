@@ -179,6 +179,35 @@ export function Field({
   );
 }
 
+/*
+  A list that folds behind a plus.
+
+  A clinic queue holds ninety seven cases and a secretary's waiting list
+  nineteen, and on a phone either one is a wall of cards with everything
+  under it pushed off the screen. Folded, the screen opens on what the
+  person came to see.
+
+  The count belongs on the header rather than inside the list, so a
+  folded section still says how much work is behind it. A list that
+  hides both its contents and its size is just missing.
+*/
+export function Folding({
+  label,
+  open,
+  onToggle,
+}: {
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <Pressable onPress={onToggle} style={styles.folding}>
+      <Text style={styles.foldingLabel}>{label}</Text>
+      <Text style={styles.foldingSign}>{open ? "−" : "+"}</Text>
+    </Pressable>
+  );
+}
+
 export function Pill({ text, tone }: { text: string; tone?: string }) {
   return (
     <View style={[styles.pill, tone ? { borderColor: tone } : null]}>
@@ -212,6 +241,30 @@ export function Empty({ text, icon = "—" }: { text: string; icon?: string }) {
 }
 
 const styles = StyleSheet.create({
+  folding: {
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+    borderRadius: radius.medium,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  foldingLabel: {
+    color: colors.text,
+    fontWeight: "800",
+    fontSize: 15,
+  },
+  foldingSign: {
+    color: colors.accent,
+    fontWeight: "800",
+    fontSize: 22,
+    lineHeight: 24,
+  },
   screen: { flex: 1, backgroundColor: colors.ground },
   scrollContent: { paddingBottom: spacing.xl * 2 },
   screenInner: { paddingHorizontal: spacing.md, paddingTop: spacing.md },

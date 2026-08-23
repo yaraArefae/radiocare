@@ -8,6 +8,7 @@ import {
   Button,
   Card,
   Empty,
+  Folding,
   Label,
   Muted,
   Pill,
@@ -54,6 +55,16 @@ export default function DoctorHome() {
   const [capability, setCapability] = useState<Capability | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
+
+  /*
+    The queue folds away.
+
+    A busy clinic holds ninety seven cases, and on a phone that is a
+    wall of cards with everything else buried under it. The count stays
+    on the header whether it is open or shut, so a folded queue still
+    says how much is behind it.
+  */
+  const [showStudies, setShowStudies] = useState(false);
 
   const loadQueue = useCallback(async (clinic: Clinic) => {
     const result = await api<{ success: boolean; studies?: ClinicStudy[]; message?: string }>(
@@ -193,9 +204,11 @@ export default function DoctorHome() {
         </View>
       </Row>
 
-      <Row style={{ marginTop: spacing.md, marginBottom: spacing.sm }}>
-        <Label>{studies.length} case{studies.length === 1 ? "" : "s"} to review</Label>
-      </Row>
+      <Folding
+        label={`${studies.length} case${studies.length === 1 ? "" : "s"} to review`}
+        open={showStudies}
+        onToggle={() => setShowStudies((open) => !open)}
+      />
 
       {error ? <Muted>{error}</Muted> : null}
 
@@ -203,7 +216,7 @@ export default function DoctorHome() {
         <Empty icon="✅" text="Nothing waiting. The queue is clear." />
       ) : null}
 
-      {studies.map((study) => (
+      {(showStudies ? studies : []).map((study) => (
         <Pressable key={study.id} onPress={() => router.push(`/study/${study.id}`)}>
           <Card>
             <Row>

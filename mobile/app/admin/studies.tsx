@@ -7,6 +7,7 @@ import { colors, priorityColor, radius, resultColor, spacing } from "../../src/t
 import {
   Card,
   Empty,
+  Folding,
   Label,
   Muted,
   Pill,
@@ -70,6 +71,12 @@ export default function AdminStudies() {
   const router = useRouter();
 
   const [studies, setStudies] = useState<Study[]>([]);
+
+  /*
+    Folded to begin with. This screen is opened to search, and a wall of
+    cards above the filter is in the way of that.
+  */
+  const [showList, setShowList] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -218,11 +225,13 @@ export default function AdminStudies() {
         <Empty icon="🗂️" text="No case matches this filter." />
       ) : null}
 
-      <Label>
-        {visible.length} shown
-      </Label>
+      <Folding
+        label={`${visible.length} shown`}
+        open={showList}
+        onToggle={() => setShowList((open) => !open)}
+      />
 
-      {visible.slice(0, 100).map((study) => {
+      {(showList ? visible.slice(0, 100) : []).map((study) => {
         const outcome = study.triageResult ?? study.aiResult ?? "";
 
         return (
