@@ -11,6 +11,7 @@ import {
 } from "../../src/api/client";
 import CaseChat from "../../src/CaseChat";
 import CaseReport from "../../src/CaseReport";
+import VolumeViewer from "../../src/VolumeViewer";
 import { colors, radius, priorityColor, resultColor, spacing } from "../../src/theme";
 import { Card, Label, Muted, Pill, Row, Screen, Title, Value } from "../../src/ui";
 
@@ -26,6 +27,7 @@ type Study = {
   patient?: string;
   patientName?: string;
   bodyRegion?: string;
+  studyKind?: string;
   imagingView?: string;
   status?: string;
   priority?: string;
@@ -112,20 +114,32 @@ export default function StudyScreen() {
             subtitle={study.imagingView}
           />
 
-          <Image
-            source={{
-              uri: `${backendUrl}/api/studies/${study.id}/image`,
-              headers: cookie ? { Cookie: cookie } : undefined,
-            }}
-            style={{
-              width: "100%",
-              height: 300,
-              borderRadius: radius.medium,
-              backgroundColor: "#000",
-              resizeMode: "contain",
-              marginBottom: spacing.sm,
-            }}
-          />
+          {/*
+            A radiograph is one picture and is shown as one. A CT or an
+            MRI is a stack, and handing it to Image drew a black
+            rectangle: the file is a .nii.gz, which nothing on a phone
+            can decode. It goes to the slice viewer instead.
+          */}
+          {study.studyKind === "VOLUME" ? (
+            <View style={{ marginBottom: spacing.sm }}>
+              <VolumeViewer studyId={String(study.id)} />
+            </View>
+          ) : (
+            <Image
+              source={{
+                uri: `${backendUrl}/api/studies/${study.id}/image`,
+                headers: cookie ? { Cookie: cookie } : undefined,
+              }}
+              style={{
+                width: "100%",
+                height: 300,
+                borderRadius: radius.medium,
+                backgroundColor: "#000",
+                resizeMode: "contain",
+                marginBottom: spacing.sm,
+              }}
+            />
+          )}
 
           <Card tone={resultColor(result)}>
             <Label>AI preliminary result</Label>
