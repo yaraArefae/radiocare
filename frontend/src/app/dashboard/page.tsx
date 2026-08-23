@@ -885,6 +885,7 @@ export default function DashboardPage() {
           {isAdmin && <AdminDoctorManagement />}
 
           {isAdmin && <AdminSecretaryManagement />}
+          {isAdmin && <AdminSecretaryRequests />}
 
           {/* Statistics */}
           <div className="mt-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
@@ -1270,6 +1271,115 @@ function AdminSecretaryManagement() {
           </p>
           <p className="mt-2 text-3xl font-bold text-white">
             {isLoading ? "..." : counts.doctorsWithout}
+          </p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/*
+  Secretary applications waiting to be read.
+
+  This sits beside the employment card rather than inside it because
+  they are two different acts. That one hires somebody the
+  administration already decided on; this one is the queue of people
+  who applied and have sent papers nobody has checked yet.
+
+  An application that nobody opens is the same as a rejection, and
+  without a count on the dashboard there was nothing to say one had
+  arrived.
+*/
+function AdminSecretaryRequests() {
+  const router = useRouter();
+
+  const [counts, setCounts] = useState({
+    pending: 0,
+    needsInfo: 0,
+  });
+
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${backendBaseUrl}/api/secretary-requests`, {
+      credentials: "include",
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        const applications = Array.isArray(data.applications)
+          ? data.applications
+          : [];
+
+        setCounts({
+          pending: applications.filter(
+            (item: { status: string }) => item.status === "Pending",
+          ).length,
+          needsInfo: applications.filter(
+            (item: { status: string }) =>
+              item.status === "Needs More Information",
+          ).length,
+        });
+      })
+      .catch(() => {
+        /* The card degrades to zeros rather than an error banner. */
+      })
+      .finally(() => setIsLoading(false));
+  }, []);
+
+  return (
+    <section className="mt-6 rounded-[28px] border border-cyan-300/20 bg-gradient-to-r from-blue-500/15 to-cyan-400/10 p-6 shadow-[0_24px_70px_rgba(0,0,0,0.22)] backdrop-blur-2xl">
+      <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-center">
+        <div>
+          <p className="text-sm font-semibold text-cyan-300">
+            Secretary Applications
+          </p>
+
+          <h3 className="mt-2 text-2xl font-bold text-white">
+            Read the applications and choose the doctor
+          </h3>
+
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-200">
+            Applicants send an identity document and the qualification
+            that trained them. Check the papers, pick the doctor they
+            will work for, and the sign-in details are emailed to them.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => router.push("/admin/secretary-requests")}
+          className="h-fit rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-3 font-bold text-white transition hover:from-cyan-400 hover:to-blue-500"
+        >
+          Review Applications
+        </button>
+      </div>
+
+      <div className="mt-6 grid gap-4 sm:grid-cols-2">
+        <div
+          className={`rounded-2xl border p-4 ${
+            counts.pending > 0
+              ? "border-amber-300/20 bg-amber-300/10"
+              : "border-white/15 bg-white/10"
+          }`}
+        >
+          <p
+            className={`text-sm ${
+              counts.pending > 0 ? "text-amber-100" : "text-slate-300"
+            }`}
+          >
+            Waiting to be read
+          </p>
+          <p className="mt-2 text-3xl font-bold text-white">
+            {isLoading ? "..." : counts.pending}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-white/15 bg-white/10 p-4">
+          <p className="text-sm text-slate-300">
+            Waiting on the applicant
+          </p>
+          <p className="mt-2 text-3xl font-bold text-white">
+            {isLoading ? "..." : counts.needsInfo}
           </p>
         </div>
       </div>

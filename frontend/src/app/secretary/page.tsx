@@ -64,6 +64,14 @@ function formatWhen(value: string) {
 export default function SecretaryPage() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [bookable, setBookable] = useState<Bookable[]>([]);
+
+  /*
+    Folded to begin with. A secretary opens this page to see the day
+    that is already booked; the cases still waiting are what she works
+    through next, and they are one click away rather than in front of
+    everything else.
+  */
+  const [showBookable, setShowBookable] = useState(false);
   const [bookingFor, setBookingFor] = useState<Bookable | null>(null);
   const [when, setWhen] = useState("");
   const [duration, setDuration] = useState("30");
@@ -282,11 +290,30 @@ export default function SecretaryPage() {
               secretary alone.
             */}
             <section className="mt-8">
-              <h2 className="text-lg font-black text-white">
-                Waiting for a visit ({bookable.length})
-              </h2>
+              {/*
+                The list folds away.
 
-              {bookable.length === 0 ? (
+                Nineteen cases drew nineteen full cards down the page,
+                and the appointments underneath - the part a secretary
+                comes here to check - were pushed off the screen
+                entirely. The count stays on the header either way, so
+                nothing disappears quietly.
+              */}
+              <button
+                type="button"
+                onClick={() => setShowBookable((open) => !open)}
+                className="flex w-full items-center justify-between gap-3 rounded-2xl border border-white/15 bg-white/[0.06] px-5 py-4 text-left transition hover:bg-white/[0.10]"
+              >
+                <h2 className="text-lg font-black text-white">
+                  Waiting for a visit ({bookable.length})
+                </h2>
+
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-cyan-300/30 bg-cyan-400/15 text-xl font-black leading-none text-cyan-100">
+                  {showBookable ? "−" : "+"}
+                </span>
+              </button>
+
+              {!showBookable ? null : bookable.length === 0 ? (
                 <p className="mt-3 rounded-2xl border border-dashed border-white/20 bg-white/[0.03] px-5 py-4 text-slate-400">
                   Every case already has a visit booked.
                 </p>

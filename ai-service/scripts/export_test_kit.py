@@ -192,6 +192,7 @@ def export_entry(
     per_kind: int,
     max_groups: int,
     split: str,
+    prefix: str = "",
 ) -> int:
     csv_path = PROJECT_ROOT / entry["csv"]
 
@@ -252,7 +253,21 @@ def export_entry(
                 continue
 
             counts[truth] = counts.get(truth, 0) + 1
-            stem = f"{truth}_{counts[truth]:02d}"
+            """
+            The prefix lets one folder hold more than one split.
+
+            Two organs have too few test cases to try properly on their
+            own - the pelvis has 37 and the MosMed chest set has 30 -
+            so the kit is built from the test split and then topped up
+            from validation. Without a prefix the second run would
+            overwrite the first: both name their files no_finding_01
+            upward.
+
+            It also keeps the two apart on sight, which matters. Only
+            the test split is an honest score, because the thresholds
+            were tuned on validation.
+            """
+            stem = f"{prefix}{truth}_{counts[truth]:02d}"
 
             if entry["kind"] == "3D":
                 volume = np.load(source)
@@ -321,6 +336,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--prefix",
+        default="",
+        help=(
+            "Put this in front of every file name, so a second split "
+            "can be written into the same folders without overwriting "
+            "the first."
+        ),
+    )
+    parser.add_argument(
         "--split",
         default="test",
         choices=["test", "val", "train"],
@@ -333,7 +357,16 @@ def main() -> None:
 
     out_root = arguments.out
 
-    if out_root.exists():
+    """
+    A fresh kit replaces whatever was there, so a rerun after a model
+    changes cannot leave last week's cases behind pretending to be this
+    week's.
+
+    A prefixed run is the exception. That is the second split being
+    added to a kit the first one just built, and wiping the folder would
+    throw away the very files it is meant to sit beside.
+    """
+    if out_root.exists() and not arguments.prefix:
         shutil.rmtree(out_root)
 
     out_root.mkdir(parents=True, exist_ok=True)
@@ -347,6 +380,7 @@ def main() -> None:
             arguments.per_kind,
             arguments.max_groups,
             arguments.split,
+            arguments.prefix,
         )
 
     print(f"\n{total} files written to {out_root}")
