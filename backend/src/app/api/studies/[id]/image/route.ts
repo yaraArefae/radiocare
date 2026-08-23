@@ -176,8 +176,29 @@ export async function GET(
           ),
           "Cache-Control":
             "private, no-store, max-age=0",
-          "Content-Disposition": `inline; filename="${encodeURIComponent(
-            imageRecord.originalFileName
+          /*
+            A radiograph is shown; a volume is handed over.
+
+            Everything left here as "inline", which is right for a JPG
+            or a PNG: the browser draws it and the doctor is looking at
+            the study. A .nii.gz or a DICOM series is not something a
+            browser can draw, so inline left the tab either blank or
+            full of binary, and the link beside the viewer - the way out
+            when the viewer itself cannot open a study - did nothing.
+
+            The slice viewer is still the way a volume is read. This is
+            the fallback, and a fallback has to actually produce the
+            file.
+
+            The name is quoted rather than percent encoded. A browser
+            reads the quoted form; encodeURIComponent turned every space
+            in a study name into %20 and saved it that way.
+          */
+          "Content-Disposition": `${
+            contentType.startsWith("image/") ? "inline" : "attachment"
+          }; filename="${imageRecord.originalFileName.replace(
+            /["\\]/g,
+            "",
           )}"`,
         },
       }

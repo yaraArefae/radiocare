@@ -41,9 +41,20 @@ export default function VolumeViewer({ studyId }: { studyId: string }) {
 
     async function load() {
       try {
+        /*
+          Asked for fresh every time.
+
+          The rendered sheet is cached on the server, which is where the
+          expensive part is: rendering three hundred slices again. The
+          browser caching it too bought a little transfer and cost
+          correctness twice over - a study rendered again showed its old
+          sheet for an hour, and a cached response carries the CORS
+          headers it was stored with, so a server fix to those headers
+          did not reach a page that had the old answer in hand.
+        */
         const response = await fetch(
           `${BACKEND_URL}/api/studies/${studyId}/slices`,
-          { credentials: "include" },
+          { credentials: "include", cache: "no-store" },
         );
 
         if (!response.ok) {
@@ -51,9 +62,52 @@ export default function VolumeViewer({ studyId }: { studyId: string }) {
           throw new Error(data.message ?? "This study could not be opened.");
         }
 
-        const parsed: Layout = JSON.parse(
-          response.headers.get("X-Slice-Layout") ?? "{}",
-        );
+        /*
+          How the slices are laid out in the sheet that just arrived.
+
+          It comes back as one header, and it also comes back as the
+          separate X-Slice-* headers the AI service set. Either is read,
+          because a browser hands script only the headers the server
+          explicitly exposes and one missing name should not blank the
+          viewer.
+        */
+        const header = response.headers.get("X-Slice-Layout");
+
+        const parsed: Partial<Layout> = header
+          ? JSON.parse(header)
+          : {
+              sliceCount: Number(response.headers.get("X-Slice-Count")),
+              columns: Number(response.headers.get("X-Slice-Columns")),
+              rows: Number(response.headers.get("X-Slice-Rows")),
+              tileWidth: Number(response.headers.get("X-Tile-Width")),
+              tileHeight: Number(response.headers.get("X-Tile-Height")),
+              originalDepth: Number(
+                response.headers.get("X-Original-Depth"),
+              ),
+            };
+
+        /*
+          An empty object is still an object, so it passed the check
+          below and the viewer drew a blank canvas and a slider whose
+          maximum was NaN. What matters is not that the layout parsed
+          but that it holds usable numbers.
+        */
+        const isUsable =
+          Number.isFinite(parsed.sliceCount) &&
+          Number(parsed.sliceCount) > 0 &&
+          Number.isFinite(parsed.tileWidth) &&
+          Number(parsed.tileWidth) > 0 &&
+          Number.isFinite(parsed.columns) &&
+          Number(parsed.columns) > 0;
+
+        if (!isUsable) {
+          throw new Error(
+            "This study was rendered, but the server did not say how " +
+              "its slices are arranged, so it cannot be drawn.",
+          );
+        }
+
+        const layout = parsed as Layout;
 
         const blob = await response.blob();
         const image = new Image();
@@ -62,13 +116,13 @@ export default function VolumeViewer({ studyId }: { studyId: string }) {
           if (!active) return;
 
           sheetRef.current = image;
-          setLayout(parsed);
+          setLayout(layout);
           /*
             Opens on the middle slice. The first and last slice of a
             scan are usually air, and a viewer that opens on a black
             rectangle looks broken.
           */
-          setSlice(Math.floor((parsed.sliceCount || 1) / 2));
+          setSlice(Math.floor(layout.sliceCount / 2));
           setLoading(false);
         };
 

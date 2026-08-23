@@ -78,6 +78,23 @@ export function middleware(request: NextRequest) {
     "Content-Type, Authorization",
   );
 
+  /*
+    The headers a cross origin page is allowed to read back.
+
+    A browser hands script only a handful of response headers by
+    default, and anything the application invented is not among them.
+    The volume viewer asks the server how many slices it just rendered
+    and how they are laid out in the sheet, and that answer arrives as
+    X-Slice-Layout - which came back as null, so the viewer drew a
+    blank canvas and counted "NaN" slices while the picture itself sat
+    in the very response it was reading.
+  */
+  response.headers.set(
+    "Access-Control-Expose-Headers",
+    "X-Slice-Layout, X-Slice-Count, X-Slice-Columns, X-Slice-Rows, " +
+      "X-Tile-Width, X-Tile-Height, X-Original-Depth, Content-Disposition",
+  );
+
   return response;
 }
 
