@@ -43,6 +43,17 @@ const doctorActions = {
   cancel: "Cancelled",
   complete: "Completed",
   reschedule: "Pending",
+  /*
+    A secretary sending on a visit her doctor asked for.
+
+    It lands in the same status a reschedule does, because the result is
+    the same thing: an invitation now sitting in front of the patient.
+    It is named separately because what it means is different - nothing
+    is being moved, it is being sent for the first time - and a button
+    labelled "reschedule" on a visit the patient has never seen reads as
+    a mistake.
+  */
+  send: "Pending",
 } as const;
 
 const closedStatuses = ["Cancelled", "Completed"];
@@ -233,10 +244,10 @@ export async function PATCH(
       Doctor side: cancel, complete, or move the appointment to a new slot.
     */
     if (isDoctor && action in doctorActions) {
-      if (
-        closedStatuses.includes(appointment.status) &&
-        action !== "reschedule"
-      ) {
+      /* Both of these carry a time, so both skip the closed check. */
+      const setsATime = action === "reschedule" || action === "send";
+
+      if (closedStatuses.includes(appointment.status) && !setsATime) {
         return Response.json(
           {
             success: false,
@@ -246,7 +257,7 @@ export async function PATCH(
         );
       }
 
-      if (action !== "reschedule") {
+      if (!setsATime) {
         const nextStatus =
           doctorActions[action as keyof typeof doctorActions];
 

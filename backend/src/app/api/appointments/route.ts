@@ -134,7 +134,12 @@ export async function GET(request: Request) {
          FROM appointment a
          JOIN study s ON s.id = a.study_id
          LEFT JOIN doctor_profile dp ON dp.user_id = a.doctor_id
-         WHERE a.patient_id = ?${rangeClause}
+         /*
+           A visit the doctor asked his secretary to arrange is not an
+           invitation yet. It reaches the patient when she sends it, so
+           until then it is not theirs to see or answer.
+         */
+         WHERE a.patient_id = ? AND a.status <> 'Requested'${rangeClause}
          ORDER BY a.scheduled_at ASC`;
 
     const [appointmentsRows] = await sql.execute(query, [
@@ -322,10 +327,38 @@ export async function POST(request: Request) {
 
     const scheduledAtSql = formatDateTimeForSql(scheduledAt);
 
+    /*
+      Who the new visit goes to next.
+
+      A doctor names a time and his secretary sends it out: she is the
+      one the patient already talks to about appointments, and a
+      practice where the doctor books directly and the secretary finds
+      out afterwards is a practice with two calendars. So his booking
+      lands as 'Requested', on her desk.
+
+      A doctor with no secretary has nobody to hand it to, and a request
+      nobody can act on would simply never reach the patient, so his
+      booking is the invitation itself. The secretary's own bookings are
+      always invitations: she is the one who would otherwise be sending
+      it to herself.
+    */
+    const [secretaryRows] = await sql.execute(
+      `SELECT id FROM secretary_profile
+       WHERE doctor_user_id = ? AND status = 'Active' LIMIT 1`,
+      [acting.doctorUserId],
+    );
+
+    const hasSecretary = (secretaryRows as unknown[]).length > 0;
+
+    const initialStatus =
+      acting.actedByRole === "doctor" && hasSecretary
+        ? "Requested"
+        : "Pending";
+
     await sql.execute(
       `INSERT INTO appointment
        (id, study_id, patient_id, doctor_id, scheduled_at, duration_minutes, status, notes)
-       VALUES (?, ?, ?, ?, ?, ?, 'Pending', ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         appointmentId,
         studyId,
@@ -333,6 +366,7 @@ export async function POST(request: Request) {
         acting.doctorUserId,
         scheduledAtSql,
         durationMinutes,
+        initialStatus,
         notes || null,
       ],
     );
@@ -365,18 +399,51 @@ export async function POST(request: Request) {
     const doctorName =
       (doctorNameRows as any[])[0]?.fullName ?? "Your doctor";
 
-    await createNotification({
-      userId: study.patientId,
-      userRole: "patient",
-      type: "appointment_invitation",
-      title: "New appointment invitation",
-      body: `${doctorName} suggested an appointment on ${describeAppointmentTime(
-        scheduledAt,
-      )} UTC. Please approve or decline it.`,
-      link: "/patients/dashboard",
-      appointmentId,
-      studyId,
-    });
+    /*
+      Who is told, and what they are told.
+
+      A request the doctor left for his secretary is not an invitation
+      yet, so telling the patient about it would ask them to approve
+      something nobody has offered them. She is told instead, and the
+      patient hears about it when she sends it.
+    */
+    if (initialStatus === "Requested") {
+      const [secretaryUserRows] = await sql.execute(
+        `SELECT user_id AS userId FROM secretary_profile
+         WHERE doctor_user_id = ? AND status = 'Active' LIMIT 1`,
+        [acting.doctorUserId],
+      );
+
+      const secretaryUserId = (secretaryUserRows as any[])[0]?.userId;
+
+      if (secretaryUserId) {
+        await createNotification({
+          userId: String(secretaryUserId),
+          userRole: "secretary",
+          type: "appointment_invitation",
+          title: "The doctor asked for a visit",
+          body: `${doctorName} asked for a visit on ${describeAppointmentTime(
+            scheduledAt,
+          )} UTC. Send it to the patient, or change the time first.`,
+          link: "/secretary",
+          appointmentId,
+          studyId,
+        });
+      }
+    } else {
+      await createNotification({
+        userId: study.patientId,
+        userRole: "patient",
+        type: "appointment_invitation",
+        title: "New appointment invitation",
+        body: `${doctorName} suggested an appointment on ${describeAppointmentTime(
+          scheduledAt,
+        )} UTC. Please approve or decline it.`,
+        link: "/patients/dashboard",
+        appointmentId,
+        studyId,
+      });
+    }
 
     return Response.json({
       success: true,
@@ -387,7 +454,7 @@ export async function POST(request: Request) {
         doctorId: acting.doctorUserId,
         scheduledAt: scheduledAt.toISOString(),
         durationMinutes,
-        status: "Pending",
+        status: initialStatus,
         notes,
       },
     });

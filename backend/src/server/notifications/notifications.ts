@@ -50,7 +50,12 @@ export type NotificationType =
 
 export type NewNotification = {
   userId: string;
-  userRole: "doctor" | "patient" | "admin";
+  /*
+    A secretary is notified too. She is told when the doctor leaves her
+    a visit to arrange, which is the one thing in this application that
+    is addressed to her and to nobody else.
+  */
+  userRole: "doctor" | "patient" | "admin" | "secretary";
   type: NotificationType;
   title: string;
   body?: string;

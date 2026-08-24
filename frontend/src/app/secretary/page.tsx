@@ -225,12 +225,28 @@ export default function SecretaryPage() {
     }
   }
 
+  /*
+    Visits the doctor asked for and the patient has not seen.
+
+    He names a time and leaves it here; she is the one the patient
+    already talks to about appointments, so she is the one who sends it.
+    Until she does, the patient has been offered nothing, which is why
+    these sit above the calendar rather than inside it.
+  */
+  const requested = appointments.filter(
+    (item) => item.status === "Requested",
+  );
+
   const upcoming = appointments.filter(
-    (item) => new Date(item.scheduledAt).getTime() >= Date.now(),
+    (item) =>
+      item.status !== "Requested" &&
+      new Date(item.scheduledAt).getTime() >= Date.now(),
   );
 
   const past = appointments.filter(
-    (item) => new Date(item.scheduledAt).getTime() < Date.now(),
+    (item) =>
+      item.status !== "Requested" &&
+      new Date(item.scheduledAt).getTime() < Date.now(),
   );
 
   return (
@@ -413,6 +429,16 @@ export default function SecretaryPage() {
             </section>
 
             <Section
+              title={`Asked for by the doctor (${requested.length})`}
+              appointments={requested}
+              busyId={busyId}
+              onAct={act}
+              openChatId={openChatId}
+              onToggleChat={setOpenChatId}
+              requestedByDoctor
+            />
+
+            <Section
               title={`Upcoming (${upcoming.length})`}
               appointments={upcoming}
               busyId={busyId}
@@ -445,6 +471,7 @@ function Section({
   openChatId,
   onToggleChat,
   actionable = false,
+  requestedByDoctor = false,
 }: {
   title: string;
   appointments: Appointment[];
@@ -453,6 +480,7 @@ function Section({
   openChatId: string;
   onToggleChat: (id: string) => void;
   actionable?: boolean;
+  requestedByDoctor?: boolean;
 }) {
   return (
     <section className="mt-8">
@@ -521,10 +549,56 @@ function Section({
                 </div>
               ) : null}
 
-              {actionable &&
-              !["Cancelled", "Declined", "Completed"].includes(
-                item.status,
-              ) ? (
+              {requestedByDoctor ? (
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={busyId === item.id}
+                    onClick={() =>
+                      onAct(item.id, "send", {
+                        scheduledAt: new Date(item.scheduledAt).toISOString(),
+                      })
+                    }
+                    className="rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-2.5 text-sm font-black text-white transition hover:from-cyan-400 hover:to-blue-500 disabled:opacity-50"
+                  >
+                    {busyId === item.id ? "Sending..." : "Send to the patient"}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={busyId === item.id}
+                    onClick={() => {
+                      const when = window.prompt(
+                        "Send a different time instead, as YYYY-MM-DD HH:MM",
+                        item.scheduledAt.slice(0, 16).replace("T", " "),
+                      );
+
+                      if (!when) return;
+
+                      const parsed = new Date(when.replace(" ", "T"));
+
+                      if (Number.isNaN(parsed.getTime())) {
+                        window.alert("That date could not be read.");
+                        return;
+                      }
+
+                      onAct(item.id, "send", {
+                        scheduledAt: parsed.toISOString(),
+                      });
+                    }}
+                    className="rounded-xl border border-white/20 bg-white/[0.05] px-4 py-2.5 text-sm font-bold text-slate-200 transition hover:bg-white/10 disabled:opacity-50"
+                  >
+                    Change the time first
+                  </button>
+
+                  <span className="text-xs text-slate-400">
+                    The patient has not been told about this yet.
+                  </span>
+                </div>
+              ) : actionable &&
+                !["Cancelled", "Declined", "Completed"].includes(
+                  item.status,
+                ) ? (
                 <div className="mt-4 flex flex-wrap gap-3">
                   <button
                     type="button"
