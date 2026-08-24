@@ -4,7 +4,7 @@ import {
   getClinicDefinition,
   type ClinicKey,
 } from "@/server/clinics/clinic-key";
-import { clinicScope, doctorClinics } from "@/server/clinics/doctor-clinics";
+import { doctorCaseScope, doctorClinics } from "@/server/clinics/doctor-clinics";
 import { databaseReady, sql } from "@/server/database/database";
 
 export const runtime = "nodejs";
@@ -63,7 +63,7 @@ export async function GET(request: Request) {
     await databaseReady;
 
     const [doctorRows] = await sql.execute(
-      `SELECT full_name, specialty, subspecialty, current_workplace,
+      `SELECT id, full_name, specialty, subspecialty, current_workplace,
          clinics, supported_body_regions AS supportedBodyRegions
        FROM doctor_profile
        WHERE user_id = ?
@@ -93,8 +93,33 @@ export async function GET(request: Request) {
     */
     const assignedClinics = doctorClinics(doctorProfile);
     const clinic = getClinicDefinition(assignedClinics[0]);
-    const caseScope = clinicScope("s.clinic_key", assignedClinics);
-    const statScope = clinicScope("clinic_key", assignedClinics);
+    /*
+      Only what this doctor was asked to read: the cases a patient
+      addressed to them, plus the ones nobody was named on.
+    */
+    /*
+      The profile id, not the user id.
+
+      A patient picks a doctor from the public directory, which lists
+      doctor_profile rows, so the choice stored on the study is that
+      profile's id. Comparing it against the account id matched nothing
+      and quietly hid every addressed case from every doctor.
+    */
+    const doctorId = String(doctorProfile.id ?? "");
+
+    const caseScope = doctorCaseScope(
+      "s.clinic_key",
+      "s.doctor_id",
+      assignedClinics,
+      doctorId,
+    );
+
+    const statScope = doctorCaseScope(
+      "clinic_key",
+      "doctor_id",
+      assignedClinics,
+      doctorId,
+    );
 
     const [casesRows] = await sql.execute(
       `SELECT s.id, p.name AS patient_name,

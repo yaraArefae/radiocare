@@ -45,6 +45,12 @@ type ClinicStudy = {
   clinicKey: string;
   aiResult: string;
   confidence: number | string | null;
+  /*
+    Whether this patient asked for the doctor reading the list. The
+    server answers it, because the study carries a doctor_profile id and
+    the page only knows the account it signed in with.
+  */
+  addressedToMe?: number | boolean;
 };
 
 type StudiesResponse = {
@@ -270,6 +276,18 @@ export default function ClinicDetailsPage() {
   const capability = capabilities[slug];
 
   const [studies, setStudies] = useState<ClinicStudy[]>([]);
+
+  /*
+    Which part of the queue is on screen.
+
+    The server already limits a doctor to their own cases plus the ones
+    nobody was addressed to; a case a patient sent to a colleague never
+    arrives here at all. What this splits is the part that does arrive,
+    because the two halves are answered differently: a case with this
+    doctor's name on it was asked of them personally, and an unaddressed
+    one is the clinic's to share out.
+  */
+  const [queueView, setQueueView] = useState<"all" | "mine" | "open">("all");
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -323,8 +341,27 @@ export default function ClinicDetailsPage() {
     void loadClinicStudies();
   }, [loadClinicStudies]);
 
-  const visibleStudies = showAllCases ? studies : studies.slice(0, 2);
-  const hiddenCaseCount = studies.length - visibleStudies.length;
+  const mineCount = useMemo(
+    () => studies.filter((study) => Boolean(study.addressedToMe)).length,
+    [studies],
+  );
+
+  const openCount = studies.length - mineCount;
+
+  const queue = useMemo(() => {
+    if (queueView === "mine") {
+      return studies.filter((study) => Boolean(study.addressedToMe));
+    }
+
+    if (queueView === "open") {
+      return studies.filter((study) => !study.addressedToMe);
+    }
+
+    return studies;
+  }, [studies, queueView]);
+
+  const visibleStudies = showAllCases ? queue : queue.slice(0, 2);
+  const hiddenCaseCount = queue.length - visibleStudies.length;
 
   const statistics = useMemo(() => {
     const assignedPatients = new Set(
@@ -584,6 +621,56 @@ export default function ClinicDetailsPage() {
             >
               Open All Studies →
             </Link>
+          </div>
+
+          {/*
+            Which half of the queue to read.
+
+            A case a patient addressed to this doctor was asked of them
+            personally; an unaddressed one is the clinic's to share out.
+            Both arrive here, and a doctor with a full queue needs to see
+            the ones asked of them by name first.
+
+            The counts sit on the buttons because an empty tab has to be
+            distinguishable from a tab nobody pressed.
+          */}
+          <div className="mt-5 flex flex-wrap gap-2">
+            {(
+              [
+                ["all", "Everything", studies.length],
+                ["mine", "Sent to me", mineCount],
+                ["open", "Not addressed", openCount],
+              ] as const
+            ).map(([value, label, count]) => {
+              const active = queueView === value;
+
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => {
+                    setQueueView(value);
+                    setShowAllCases(false);
+                  }}
+                  className={`rounded-xl border px-4 py-2.5 text-sm font-bold transition ${
+                    active
+                      ? "border-cyan-300/50 bg-cyan-400/20 text-cyan-50"
+                      : "border-white/15 bg-white/[0.05] text-slate-300 hover:bg-white/10"
+                  }`}
+                >
+                  {label}
+                  <span
+                    className={`ml-2 rounded-md px-1.5 py-0.5 text-xs ${
+                      active
+                        ? "bg-cyan-300/25 text-cyan-50"
+                        : "bg-white/10 text-slate-400"
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
           {errorMessage ? (

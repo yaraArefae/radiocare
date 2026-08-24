@@ -1,5 +1,5 @@
 import type { ClinicKey } from "@/server/clinics/clinic-key";
-import { clinicScope, doctorClinics } from "@/server/clinics/doctor-clinics";
+import { doctorCaseScope, doctorClinics } from "@/server/clinics/doctor-clinics";
 import { auth } from "@/server/auth/auth";
 import { databaseReady, sql } from "@/server/database/database";
 import { normalizeRoles } from "@/server/messaging/case-access";
@@ -61,7 +61,7 @@ export async function GET(request: Request) {
 
     if (!isAdmin && isDoctor) {
       const [profileRows] = await sql.execute(
-        `SELECT specialty, subspecialty, clinics,
+        `SELECT id, specialty, subspecialty, clinics,
            supported_body_regions AS supportedBodyRegions
          FROM doctor_profile
          WHERE user_id = ? LIMIT 1`,
@@ -80,12 +80,14 @@ export async function GET(request: Request) {
         );
       }
 
-      const scope = clinicScope(
+      const scope = doctorCaseScope(
         "s.clinic_key",
+        "s.doctor_id",
         narrowToRequestedClinic(
           doctorClinics(profile),
           new URL(request.url).searchParams.get("clinic"),
         ),
+        String(profile.id ?? ""),
       );
 
       scopeClause = `WHERE ${scope.condition}`;

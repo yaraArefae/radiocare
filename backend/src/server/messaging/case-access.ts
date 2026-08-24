@@ -1,4 +1,4 @@
-import { doctorClinics, servesClinic } from "@/server/clinics/doctor-clinics";
+import { doctorMayReadCase } from "@/server/clinics/doctor-clinics";
 import { sql } from "@/server/database/database";
 
 /* The clinic doctor lookup lives with the other clinic helpers now. */
@@ -11,6 +11,8 @@ export type CaseStudy = {
   patientId: string;
   patientName: string;
   clinicKey: string;
+  /* The doctor the patient chose, when they chose one. */
+  doctorId: string | null;
   bodyRegion: string;
   triageResult: string;
 };
@@ -88,7 +90,8 @@ export async function resolveCaseAccess(
 
   const [studyRows] = await sql.execute(
     `SELECT s.id, s.patient_id AS patientId, p.name AS patientName,
-       s.clinic_key AS clinicKey, s.body_region AS bodyRegion,
+       s.clinic_key AS clinicKey, s.doctor_id AS doctorId,
+       s.body_region AS bodyRegion,
        ${triageResultExpression} AS triageResult
      FROM study s
      JOIN patient p ON p.id = s.patient_id
@@ -151,7 +154,7 @@ export async function resolveCaseAccess(
   }
 
   const [profileRows] = await sql.execute(
-    `SELECT full_name AS fullName, specialty, subspecialty, clinics,
+    `SELECT id, full_name AS fullName, specialty, subspecialty, clinics,
        supported_body_regions AS supportedBodyRegions
      FROM doctor_profile
      WHERE user_id = ?
@@ -170,14 +173,22 @@ export async function resolveCaseAccess(
   }
 
   /*
-    A doctor can work in more than one clinic, so the case has to belong
-    to any one of theirs, not to a single one.
+    The same rule the clinic queue uses, applied to a case reached by its
+    address.
+
+    A doctor works in more than one clinic, so the case has to belong to
+    any one of theirs. And a case a patient addressed to a colleague is
+    that colleague's to read: without this check a doctor kept out of
+    their own queue could still open the case by typing its URL, which
+    would make the queue a suggestion rather than a rule.
   */
-  if (!servesClinic(profile, study.clinicKey)) {
+  if (!doctorMayReadCase(profile, study, String(profile.id ?? ""))) {
     return {
       allowed: false,
       status: 403,
-      message: "This case belongs to another clinic.",
+      message: study.doctorId
+        ? "This case was sent to another doctor."
+        : "This case belongs to another clinic.",
     };
   }
 

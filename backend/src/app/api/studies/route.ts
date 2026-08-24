@@ -9,7 +9,7 @@ import path from "node:path";
 import { auth } from "@/server/auth/auth";
 import { resolveClinicKey, type ClinicKey } from "@/server/clinics/clinic-key";
 import {
-  clinicScope,
+  doctorCaseScope,
   doctorClinics,
   servesClinic,
 } from "@/server/clinics/doctor-clinics";
@@ -338,7 +338,7 @@ async function notifyAboutNewStudy(study: {
   if (needsDoctorReview) {
     try {
       const [doctorRows] = await sql.execute(
-        `SELECT dp.user_id AS userId, dp.specialty, dp.subspecialty, dp.clinics,
+        `SELECT dp.id, dp.user_id AS userId, dp.specialty, dp.subspecialty, dp.clinics,
          dp.supported_body_regions AS supportedBodyRegions
          FROM doctor_profile dp
          JOIN user u ON u.id = dp.user_id
@@ -1144,6 +1144,13 @@ export async function GET(request: Request) {
     const whereConditions: string[] = [];
     const queryValues: string[] = [];
 
+    /*
+      The doctor_profile id of whoever is asking, when that is a doctor.
+      Empty for everybody else, which makes the addressedToMe flag false
+      for them rather than wrong.
+    */
+    let readerProfileId = "";
+
     await databaseReady;
 
     /*
@@ -1159,7 +1166,7 @@ export async function GET(request: Request) {
     if (!sessionRoles.includes("admin")) {
       if (sessionRoles.includes("doctor")) {
         const [profileRows] = await sql.execute(
-          `SELECT specialty, subspecialty, clinics,
+          `SELECT id, specialty, subspecialty, clinics,
          supported_body_regions AS supportedBodyRegions
            FROM doctor_profile
            WHERE user_id = ?
@@ -1193,7 +1200,14 @@ export async function GET(request: Request) {
           first while no case is ever invisible to the clinic that owes
           it a reading.
         */
-        const scope = clinicScope("s.clinic_key", doctorClinics(profile));
+        readerProfileId = String(profile.id ?? "");
+
+        const scope = doctorCaseScope(
+          "s.clinic_key",
+          "s.doctor_id",
+          doctorClinics(profile),
+          String(profile.id ?? ""),
+        );
 
         whereConditions.push(scope.condition);
         queryValues.push(...scope.values);
@@ -1251,6 +1265,21 @@ export async function GET(request: Request) {
          s.imaging_view AS view,
          s.study_kind AS studyKind,
          s.doctor_id AS doctorId,
+         /*
+           Whether this patient asked for the doctor now reading the
+           list.
+
+           Answered here rather than in the browser. The study carries
+           the doctor_profile id a patient picked from the public
+           directory, and a page only knows the account id it signed in
+           with; comparing the two matched nothing and reported every
+           case as unaddressed. The server holds both, so it answers.
+
+           It is false for everyone else, including an administrator
+           looking at the same list, because the question is about the
+           person asking.
+         */
+         (s.doctor_id IS NOT NULL AND s.doctor_id = ?) AS addressedToMe,
          DATE(s.created_at) AS date,
          s.priority,
          s.status,
@@ -1279,7 +1308,11 @@ export async function GET(request: Request) {
          ON a.study_id = s.id
        ${whereClause}
        ORDER BY s.created_at DESC`,
-      queryValues
+      /*
+        The SELECT list carries one placeholder of its own, and it is
+        read before any in the WHERE clause, so its value leads.
+      */
+      [readerProfileId, ...queryValues]
     );
 
     const studies = result;

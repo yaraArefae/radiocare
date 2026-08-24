@@ -1,4 +1,4 @@
-import { clinicScope, doctorClinics } from "@/server/clinics/doctor-clinics";
+import { doctorCaseScope, doctorClinics } from "@/server/clinics/doctor-clinics";
 import { auth } from "@/server/auth/auth";
 import { databaseReady, sql } from "@/server/database/database";
 import {
@@ -51,7 +51,7 @@ export async function GET(request: Request) {
 
     if (isDoctor) {
       const [profileRows] = await sql.execute(
-        `SELECT specialty, subspecialty, clinics,
+        `SELECT id, specialty, subspecialty, clinics,
          supported_body_regions AS supportedBodyRegions
          FROM doctor_profile
          WHERE user_id = ?
@@ -71,7 +71,12 @@ export async function GET(request: Request) {
         );
       }
 
-      const scope = clinicScope("s.clinic_key", doctorClinics(profile));
+      const scope = doctorCaseScope(
+        "s.clinic_key",
+        "s.doctor_id",
+        doctorClinics(profile),
+        String(profile.id ?? ""),
+      );
 
       scopeCondition = scope.condition;
       scopeValues = scope.values;
