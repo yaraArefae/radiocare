@@ -103,8 +103,21 @@ export async function GET(
        COALESCE(p.phone,'') AS phone, COALESCE(p.email,'') AS email,
        s.body_region AS bodyRegion, s.imaging_view AS imagingView, s.priority,
        COALESCE(s.clinical_notes,'') AS clinicalNotes,
-       COALESCE(s.symptoms, p.symptoms, '') AS symptoms,
-       COALESCE(s.medical_history, p.medical_history, '') AS medicalHistory,
+       /*
+         What this patient said about THIS scan, and nothing else.
+
+         These used to fall back to the patient row, which holds
+         whatever they typed on their most recent upload. So a symptom
+         written once appeared on every study they had ever sent, and a
+         doctor opening a scan from March read a complaint made in
+         August. The same mistake the age had: a column that belongs to
+         a person being read as though it belonged to a study.
+
+         A study with an empty box is a study where nothing was
+         reported, and it has to say so.
+       */
+       COALESCE(s.symptoms, '') AS symptoms,
+       COALESCE(s.medical_history, '') AS medicalHistory,
        s.original_file_name AS originalFileName, s.file_type AS fileType,
        s.study_kind AS studyKind,
        s.file_size AS fileSize, s.status, s.clinic_key AS clinicKey, s.created_at AS createdAt,
