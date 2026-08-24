@@ -35,7 +35,14 @@ import {
 type PickedFile = { uri: string; name: string; type: string };
 
 type Region = {
-  key: string;
+  /*
+    Unique per study type. The body region is not: five of these are
+    chest studies and six are abdominal, and reusing it meant React saw
+    repeated keys and the chip row highlighted every chest study when
+    one was picked.
+  */
+  id: string;
+  bodyRegion: string;
   label: string;
   endpoint: string;
   view: string;
@@ -44,26 +51,26 @@ type Region = {
 
 const REGIONS: readonly Region[] = [
   /* ---- X-ray: picked from the photo library ---------------------- */
-  { key: "CHEST", label: "Chest X-ray", endpoint: "/predict/chest/findings", view: "Chest X-ray", kind: "image" },
-  { key: "SHOULDER", label: "Shoulder X-ray", endpoint: "/predict/shoulder", view: "Shoulder X-ray", kind: "image" },
-  { key: "HAND_WRIST", label: "Hand & Wrist X-ray", endpoint: "/predict/hand-wrist", view: "Hand & Wrist X-ray", kind: "image" },
-  { key: "SPINE", label: "Spine X-ray", endpoint: "/predict/region/spine", view: "Spine X-ray", kind: "image" },
-  { key: "PELVIS_HIP", label: "Pelvis & Hip X-ray", endpoint: "/predict/region/pelvis", view: "Pelvis & Hip X-ray", kind: "image" },
-  { key: "LOWER_LIMB", label: "Leg & Foot X-ray", endpoint: "/predict/region/lower-limb", view: "Lower Limb X-ray", kind: "image" },
+  { id: "findings", bodyRegion: "CHEST", label: "Chest X-ray", endpoint: "/predict/chest/findings", view: "Chest X-ray", kind: "image" },
+  { id: "shoulder", bodyRegion: "SHOULDER", label: "Shoulder X-ray", endpoint: "/predict/shoulder", view: "Shoulder X-ray", kind: "image" },
+  { id: "hand-wrist", bodyRegion: "HAND_WRIST", label: "Hand & Wrist X-ray", endpoint: "/predict/hand-wrist", view: "Hand & Wrist X-ray", kind: "image" },
+  { id: "spine", bodyRegion: "SPINE", label: "Spine X-ray", endpoint: "/predict/region/spine", view: "Spine X-ray", kind: "image" },
+  { id: "pelvis", bodyRegion: "PELVIS_HIP", label: "Pelvis & Hip X-ray", endpoint: "/predict/region/pelvis", view: "Pelvis & Hip X-ray", kind: "image" },
+  { id: "lower-limb", bodyRegion: "LOWER_LIMB", label: "Leg & Foot X-ray", endpoint: "/predict/region/lower-limb", view: "Lower Limb X-ray", kind: "image" },
 
   /* ---- CT and MRI: chosen as a file ------------------------------ */
-  { key: "HEAD", label: "Head MRI — Brain Tumour", endpoint: "/predict/volume/head-mri", view: "Head MRI", kind: "volume" },
-  { key: "HEAD", label: "Head MRA — Aneurysm", endpoint: "/predict/volume/head-mra", view: "Head MRA", kind: "volume" },
-  { key: "CHEST", label: "Chest CT — Lung Nodule", endpoint: "/predict/volume/chest-ct", view: "Chest CT", kind: "volume" },
-  { key: "CHEST", label: "Lung CT — Tumour", endpoint: "/predict/volume/chest-ct-tumour", view: "Lung CT", kind: "volume" },
-  { key: "CHEST", label: "Chest CT — Whole Scan", endpoint: "/predict/volume/chest-ct-lungs", view: "Chest CT", kind: "volume" },
-  { key: "CHEST", label: "Rib CT — Fracture Type", endpoint: "/predict/volume/chest-ct-ribs", view: "Rib CT", kind: "volume" },
-  { key: "ABDOMEN", label: "Abdomen CT — Adrenal", endpoint: "/predict/volume/abdomen-ct", view: "Abdomen CT", kind: "volume" },
-  { key: "ABDOMEN", label: "Pancreas CT — Tumour", endpoint: "/predict/volume/abdomen-ct-pancreas", view: "Pancreas CT", kind: "volume" },
-  { key: "ABDOMEN", label: "Liver Vessels CT — Tumour", endpoint: "/predict/volume/abdomen-ct-liver-vessels", view: "Liver Vessels CT", kind: "volume" },
-  { key: "ABDOMEN", label: "Colon CT — Cancer", endpoint: "/predict/volume/abdomen-ct-colon", view: "Colon CT", kind: "volume" },
-  { key: "ABDOMEN", label: "Kidney CT — Tumour", endpoint: "/predict/volume/abdomen-ct-kidney", view: "Kidney CT", kind: "volume" },
-  { key: "ABDOMEN", label: "Liver CT — Tumour", endpoint: "/predict/volume/abdomen-ct-liver", view: "Liver CT", kind: "volume" },
+  { id: "head-mri", bodyRegion: "HEAD", label: "Head MRI — Brain Tumour", endpoint: "/predict/volume/head-mri", view: "Head MRI", kind: "volume" },
+  { id: "head-mra", bodyRegion: "HEAD", label: "Head MRA — Aneurysm", endpoint: "/predict/volume/head-mra", view: "Head MRA", kind: "volume" },
+  { id: "chest-ct", bodyRegion: "CHEST", label: "Chest CT — Lung Nodule", endpoint: "/predict/volume/chest-ct", view: "Chest CT", kind: "volume" },
+  { id: "chest-ct-tumour", bodyRegion: "CHEST", label: "Lung CT — Tumour", endpoint: "/predict/volume/chest-ct-tumour", view: "Lung CT", kind: "volume" },
+  { id: "chest-ct-lungs", bodyRegion: "CHEST", label: "Chest CT — Whole Scan", endpoint: "/predict/volume/chest-ct-lungs", view: "Chest CT", kind: "volume" },
+  { id: "chest-ct-ribs", bodyRegion: "CHEST", label: "Rib CT — Fracture Type", endpoint: "/predict/volume/chest-ct-ribs", view: "Rib CT", kind: "volume" },
+  { id: "abdomen-ct", bodyRegion: "ABDOMEN", label: "Abdomen CT — Adrenal", endpoint: "/predict/volume/abdomen-ct", view: "Abdomen CT", kind: "volume" },
+  { id: "abdomen-ct-pancreas", bodyRegion: "ABDOMEN", label: "Pancreas CT — Tumour", endpoint: "/predict/volume/abdomen-ct-pancreas", view: "Pancreas CT", kind: "volume" },
+  { id: "abdomen-ct-liver-vessels", bodyRegion: "ABDOMEN", label: "Liver Vessels CT — Tumour", endpoint: "/predict/volume/abdomen-ct-liver-vessels", view: "Liver Vessels CT", kind: "volume" },
+  { id: "abdomen-ct-colon", bodyRegion: "ABDOMEN", label: "Colon CT — Cancer", endpoint: "/predict/volume/abdomen-ct-colon", view: "Colon CT", kind: "volume" },
+  { id: "abdomen-ct-kidney", bodyRegion: "ABDOMEN", label: "Kidney CT — Tumour", endpoint: "/predict/volume/abdomen-ct-kidney", view: "Kidney CT", kind: "volume" },
+  { id: "abdomen-ct-liver", bodyRegion: "ABDOMEN", label: "Liver CT — Tumour", endpoint: "/predict/volume/abdomen-ct-liver", view: "Liver CT", kind: "volume" },
 ] as const;
 
 type Finding = {
@@ -246,14 +253,14 @@ export default function UploadScreen() {
       studyForm.append("gender", gender);
       studyForm.append("symptoms", symptoms.trim());
       studyForm.append("medicalHistory", history.trim());
-      studyForm.append("bodyRegion", reading.bodyRegion ?? region.key);
+      studyForm.append("bodyRegion", reading.bodyRegion ?? region.bodyRegion);
       studyForm.append("imagingView", region.view);
       studyForm.append("priority", reading.priority ?? "Routine");
       studyForm.append(
         "clinicalNotes",
         `${region.label} uploaded from the mobile application.`,
       );
-      studyForm.append("detectedRegion", reading.detectedRegion ?? reading.bodyRegion ?? region.key);
+      studyForm.append("detectedRegion", reading.detectedRegion ?? reading.bodyRegion ?? region.bodyRegion);
       studyForm.append("detectedClinic", reading.detectedClinic ?? "");
       studyForm.append("triageResult", result);
       studyForm.append("predictedFinding", reading.primaryFinding ?? result);
@@ -296,11 +303,11 @@ export default function UploadScreen() {
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
           <Row style={{ gap: spacing.xs }}>
             {REGIONS.map((item) => {
-              const isActive = item.key === region.key;
+              const isActive = item.id === region.id;
 
               return (
                 <Pressable
-                  key={item.key}
+                  key={item.id}
                   onPress={() => {
                     setRegion(item);
                     setAnalysis(null);
