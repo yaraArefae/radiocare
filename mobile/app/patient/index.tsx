@@ -92,10 +92,10 @@ export default function PatientHome() {
       <Title
         eyebrow="Patient"
         title={name ? `Hello, ${name}` : "My studies"}
-        subtitle="Send an X-ray, follow its review, read the doctor's report."
+        subtitle="Send an X-ray, a CT or an MRI, follow its review, read the doctor's report."
       />
 
-      <Button label="＋  Upload an X-ray" onPress={() => router.push("/patient/upload")} />
+      <Button label="＋  Upload a study" onPress={() => router.push("/patient/upload")} />
 
       <Row style={{ marginTop: spacing.sm }}>
         <View style={{ flex: 1 }}>

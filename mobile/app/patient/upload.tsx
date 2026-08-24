@@ -1,3 +1,4 @@
+import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
 import { useState } from "react";
@@ -19,17 +20,50 @@ import {
 } from "../../src/ui";
 
 /*
-  The same six clinics the website offers, with the same endpoints. A
-  region that is not on this list has no clinic to receive it, so it is
-  not offered.
+  Every study the website accepts, in the two kinds it accepts them as.
+
+  A radiograph is one picture and comes out of the photo library. A CT
+  or an MRI is a stack of slices in a .nii.gz, an .npy or a folder of
+  DICOM files, which no photo library holds and no image picker will
+  offer - so those are chosen through the file picker instead, and sent
+  to a different endpoint under a different field name.
+
+  The phone offered the six X-ray clinics only. Two thirds of the
+  trained models read volumes, and none of them could be reached from
+  here at all.
 */
-const REGIONS = [
-  { key: "CHEST", label: "Chest", endpoint: "/predict/chest/findings", view: "Chest X-ray" },
-  { key: "SHOULDER", label: "Shoulder", endpoint: "/predict/shoulder", view: "Shoulder X-ray" },
-  { key: "HAND_WRIST", label: "Hand & Wrist", endpoint: "/predict/hand-wrist", view: "Hand & Wrist X-ray" },
-  { key: "SPINE", label: "Spine", endpoint: "/predict/region/spine", view: "Spine X-ray" },
-  { key: "PELVIS_HIP", label: "Pelvis & Hip", endpoint: "/predict/region/pelvis", view: "Pelvis & Hip X-ray" },
-  { key: "LOWER_LIMB", label: "Leg & Foot", endpoint: "/predict/region/lower-limb", view: "Lower Limb X-ray" },
+type PickedFile = { uri: string; name: string; type: string };
+
+type Region = {
+  key: string;
+  label: string;
+  endpoint: string;
+  view: string;
+  kind: "image" | "volume";
+};
+
+const REGIONS: readonly Region[] = [
+  /* ---- X-ray: picked from the photo library ---------------------- */
+  { key: "CHEST", label: "Chest X-ray", endpoint: "/predict/chest/findings", view: "Chest X-ray", kind: "image" },
+  { key: "SHOULDER", label: "Shoulder X-ray", endpoint: "/predict/shoulder", view: "Shoulder X-ray", kind: "image" },
+  { key: "HAND_WRIST", label: "Hand & Wrist X-ray", endpoint: "/predict/hand-wrist", view: "Hand & Wrist X-ray", kind: "image" },
+  { key: "SPINE", label: "Spine X-ray", endpoint: "/predict/region/spine", view: "Spine X-ray", kind: "image" },
+  { key: "PELVIS_HIP", label: "Pelvis & Hip X-ray", endpoint: "/predict/region/pelvis", view: "Pelvis & Hip X-ray", kind: "image" },
+  { key: "LOWER_LIMB", label: "Leg & Foot X-ray", endpoint: "/predict/region/lower-limb", view: "Lower Limb X-ray", kind: "image" },
+
+  /* ---- CT and MRI: chosen as a file ------------------------------ */
+  { key: "HEAD", label: "Head MRI — Brain Tumour", endpoint: "/predict/volume/head-mri", view: "Head MRI", kind: "volume" },
+  { key: "HEAD", label: "Head MRA — Aneurysm", endpoint: "/predict/volume/head-mra", view: "Head MRA", kind: "volume" },
+  { key: "CHEST", label: "Chest CT — Lung Nodule", endpoint: "/predict/volume/chest-ct", view: "Chest CT", kind: "volume" },
+  { key: "CHEST", label: "Lung CT — Tumour", endpoint: "/predict/volume/chest-ct-tumour", view: "Lung CT", kind: "volume" },
+  { key: "CHEST", label: "Chest CT — Whole Scan", endpoint: "/predict/volume/chest-ct-lungs", view: "Chest CT", kind: "volume" },
+  { key: "CHEST", label: "Rib CT — Fracture Type", endpoint: "/predict/volume/chest-ct-ribs", view: "Rib CT", kind: "volume" },
+  { key: "ABDOMEN", label: "Abdomen CT — Adrenal", endpoint: "/predict/volume/abdomen-ct", view: "Abdomen CT", kind: "volume" },
+  { key: "ABDOMEN", label: "Pancreas CT — Tumour", endpoint: "/predict/volume/abdomen-ct-pancreas", view: "Pancreas CT", kind: "volume" },
+  { key: "ABDOMEN", label: "Liver Vessels CT — Tumour", endpoint: "/predict/volume/abdomen-ct-liver-vessels", view: "Liver Vessels CT", kind: "volume" },
+  { key: "ABDOMEN", label: "Colon CT — Cancer", endpoint: "/predict/volume/abdomen-ct-colon", view: "Colon CT", kind: "volume" },
+  { key: "ABDOMEN", label: "Kidney CT — Tumour", endpoint: "/predict/volume/abdomen-ct-kidney", view: "Kidney CT", kind: "volume" },
+  { key: "ABDOMEN", label: "Liver CT — Tumour", endpoint: "/predict/volume/abdomen-ct-liver", view: "Liver CT", kind: "volume" },
 ] as const;
 
 type Finding = {
@@ -66,12 +100,26 @@ export default function UploadScreen() {
   const [gender, setGender] = useState("Male");
   const [symptoms, setSymptoms] = useState("");
   const [history, setHistory] = useState("");
-  const [image, setImage] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  /*
+    Whatever was chosen, from whichever picker.
+
+    Both pickers hand back a uri, a name and a type, and everything
+    downstream needs only those three, so the screen keeps one shape
+    rather than branching on which picker filled it.
+  */
+  const [file, setFile] = useState<PickedFile | null>(null);
 
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [message, setMessage] = useState("");
   const [saved, setSaved] = useState("");
   const [isBusy, setIsBusy] = useState(false);
+
+  function accept(chosen: PickedFile) {
+    setFile(chosen);
+    setAnalysis(null);
+    setSaved("");
+    setMessage("");
+  }
 
   async function pick(from: "library" | "camera") {
     const permission =
@@ -90,11 +138,39 @@ export default function UploadScreen() {
         : await ImagePicker.launchImageLibraryAsync({ quality: 1 });
 
     if (!picked.canceled && picked.assets[0]) {
-      setImage(picked.assets[0]);
-      setAnalysis(null);
-      setSaved("");
-      setMessage("");
+      const asset = picked.assets[0];
+
+      accept({
+        uri: asset.uri,
+        name: asset.fileName ?? `xray-${Date.now()}.jpg`,
+        type: asset.mimeType ?? "image/jpeg",
+      });
     }
+  }
+
+  /*
+    A volume is a file, not a picture.
+
+    No photo library holds a .nii.gz and no image picker will offer one,
+    so a CT or an MRI is chosen from the phone's files. The type is left
+    open because these extensions have no agreed MIME type and a strict
+    filter hides the very file the patient came to send.
+  */
+  async function pickVolume() {
+    const picked = await DocumentPicker.getDocumentAsync({
+      type: "*/*",
+      copyToCacheDirectory: true,
+    });
+
+    if (picked.canceled || !picked.assets?.[0]) return;
+
+    const asset = picked.assets[0];
+
+    accept({
+      uri: asset.uri,
+      name: asset.name,
+      type: asset.mimeType ?? "application/octet-stream",
+    });
   }
 
   /*
@@ -102,22 +178,27 @@ export default function UploadScreen() {
     browser hands over a real File, while the native runtime uploads
     from the file's address.
   */
-  async function filePart(asset: ImagePicker.ImagePickerAsset) {
-    const name = asset.fileName ?? `xray-${Date.now()}.jpg`;
-    const type = asset.mimeType ?? "image/jpeg";
+  async function filePart(chosen: PickedFile) {
+    if (chosen.uri.startsWith("data:") || chosen.uri.startsWith("blob:")) {
+      const blob = await (await fetch(chosen.uri)).blob();
 
-    if (asset.uri.startsWith("data:") || asset.uri.startsWith("blob:")) {
-      const blob = await (await fetch(asset.uri)).blob();
-
-      return new File([blob], name, { type });
+      return new File([blob], chosen.name, { type: chosen.type });
     }
 
-    return { uri: asset.uri, name, type } as unknown as Blob;
+    return {
+      uri: chosen.uri,
+      name: chosen.name,
+      type: chosen.type,
+    } as unknown as Blob;
   }
 
   async function analyse() {
-    if (!image) {
-      setMessage("Choose the X-ray image first.");
+    if (!file) {
+      setMessage(
+        region.kind === "volume"
+          ? "Choose the scan file first."
+          : "Choose the X-ray image first.",
+      );
       return;
     }
 
@@ -133,10 +214,15 @@ export default function UploadScreen() {
     setSaved("");
 
     try {
-      const part = await filePart(image);
+      const part = await filePart(file);
 
+      /*
+        The volume endpoints take the file under "study" and the image
+        endpoints under "image". Sending the wrong name reaches the
+        server as a request with no file at all.
+      */
       const aiForm = new FormData();
-      aiForm.append("image", part as any);
+      aiForm.append(region.kind === "volume" ? "study" : "image", part as any);
 
       const aiResponse = await fetch(`${aiServiceUrl}${region.endpoint}`, {
         method: "POST",
@@ -155,7 +241,7 @@ export default function UploadScreen() {
       const studyForm = new FormData();
       const result = reading.triageResult ?? reading.result ?? "NOT_ANALYZED";
 
-      studyForm.append("image", (await filePart(image)) as any);
+      studyForm.append("image", (await filePart(file)) as any);
       studyForm.append("age", String(years));
       studyForm.append("gender", gender);
       studyForm.append("symptoms", symptoms.trim());
@@ -165,7 +251,7 @@ export default function UploadScreen() {
       studyForm.append("priority", reading.priority ?? "Routine");
       studyForm.append(
         "clinicalNotes",
-        `${region.label} X-ray uploaded from the mobile application.`,
+        `${region.label} uploaded from the mobile application.`,
       );
       studyForm.append("detectedRegion", reading.detectedRegion ?? reading.bodyRegion ?? region.key);
       studyForm.append("detectedClinic", reading.detectedClinic ?? "");
@@ -200,7 +286,7 @@ export default function UploadScreen() {
     <Screen>
       <Title
         eyebrow="New study"
-        title="Upload an X-ray"
+        title="Upload a study"
         subtitle="Pick the body region, add the image, and the clinic's model reads it."
       />
 
@@ -302,11 +388,18 @@ export default function UploadScreen() {
       </Card>
 
       <Card>
-        <Label>X-ray image</Label>
+        <Label>{region.kind === "volume" ? "Scan file" : "X-ray image"}</Label>
 
-        {image ? (
+        {/*
+          A radiograph is shown; a volume cannot be. A .nii.gz holds a
+          stack of slices in a format nothing on a phone can decode, so
+          drawing it would produce a black rectangle. The file's name is
+          the honest preview, and the slices are played on the study
+          screen once the AI service has rendered them.
+        */}
+        {file && region.kind === "image" ? (
           <Image
-            source={{ uri: image.uri }}
+            source={{ uri: file.uri }}
             style={{
               width: "100%",
               height: 260,
@@ -327,31 +420,48 @@ export default function UploadScreen() {
               alignItems: "center",
               justifyContent: "center",
               marginBottom: spacing.sm,
+              paddingHorizontal: spacing.md,
             }}
           >
-            <Muted>JPG, PNG or WEBP · up to 20 MB</Muted>
+            {file ? (
+              <>
+                <Text style={{ fontSize: 30 }}>🧊</Text>
+                <Value>{file.name}</Value>
+                <Muted>Volume selected</Muted>
+              </>
+            ) : (
+              <Muted>
+                {region.kind === "volume"
+                  ? "NIfTI (.nii, .nii.gz), .npy or DICOM (.dcm, .zip)"
+                  : "JPG, PNG or WEBP · up to 20 MB"}
+              </Muted>
+            )}
           </View>
         )}
 
-        <Row>
-          <View style={{ flex: 1 }}>
-            <Button label="Choose image" kind="ghost" onPress={() => pick("library")} />
-          </View>
+        {region.kind === "volume" ? (
+          <Button label="Choose a scan file" kind="ghost" onPress={pickVolume} />
+        ) : (
+          <Row>
+            <View style={{ flex: 1 }}>
+              <Button label="Choose image" kind="ghost" onPress={() => pick("library")} />
+            </View>
 
-          <View style={{ flex: 1 }}>
-            <Button label="Camera" kind="ghost" onPress={() => pick("camera")} />
-          </View>
-        </Row>
+            <View style={{ flex: 1 }}>
+              <Button label="Camera" kind="ghost" onPress={() => pick("camera")} />
+            </View>
+          </Row>
+        )}
       </Card>
 
       <Notice text={message} tone={colors.bad} />
       <Notice text={saved} tone={colors.good} />
 
       <Button
-        label={`Analyze ${region.label} X-ray`}
+        label={`Analyze ${region.label}`}
         onPress={analyse}
         loading={isBusy}
-        disabled={!image}
+        disabled={!file}
       />
 
       {analysis ? (
