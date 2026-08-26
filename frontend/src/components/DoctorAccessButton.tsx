@@ -28,11 +28,52 @@ export default function DoctorAccessButton({
   const [status, setStatus] = useState(initialStatus);
   const [confirming, setConfirming] = useState(false);
   const [reason, setReason] = useState("");
+
+  /*
+    Where this doctor's open cases go.
+
+    Withdrawing a doctor decides something about their patients too: a
+    case only reaches the doctor it was addressed to, so leaving them
+    addressed to somebody who cannot sign in takes them out of the
+    application entirely. Empty means "back to the clinic", which is the
+    state a case is in when nobody was chosen.
+  */
+  const [transferTo, setTransferTo] = useState("");
+  const [colleagues, setColleagues] = useState<
+    Array<{ id: string; fullName: string; specialty?: string }>
+  >([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
 
   const revoked = status === "Revoked";
+
+  /*
+    The colleagues are fetched when the dialog opens rather than on
+    render: most of the time nobody is being withdrawn, and a list of
+    doctors is not worth a request per row of the page.
+  */
+  async function openConfirm() {
+    setConfirming(true);
+
+    try {
+      const response = await fetch(
+        `${BACKEND_URL}/api/admin/doctors/${userId}/access`,
+        { credentials: "include", cache: "no-store" },
+      );
+
+      const data = await response.json();
+
+      if (data?.success) setColleagues(data.colleagues ?? []);
+    } catch (error) {
+      /*
+        The dialog still works without the list: leaving the choice
+        empty returns the cases to their clinic, which is the safe
+        answer anyway.
+      */
+      console.error("Unable to list the colleagues:", error);
+    }
+  }
 
   async function apply(action: "revoke" | "restore") {
     setBusy(true);
@@ -46,7 +87,11 @@ export default function DoctorAccessButton({
           method: "PATCH",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action, reason }),
+          body: JSON.stringify({
+            action,
+            reason,
+            transferToDoctorId: transferTo,
+          }),
         },
       );
 
@@ -80,10 +125,31 @@ export default function DoctorAccessButton({
         </p>
 
         <p className="mt-2 text-xs leading-5 text-rose-100/80">
-          They stop being able to sign in and stop receiving new cases.
-          Their signed reports stay in the patient records, and the cases
-          already in their clinic are read by the other doctors there.
+          They stop being able to sign in and stop receiving new cases,
+          and any visit that had not happened yet is cancelled. Their
+          signed reports stay in the patient records, and the cases they
+          had already read keep their name on them.
         </p>
+
+        <label className="mt-3 block text-xs font-bold text-rose-100/90">
+          Move their open cases to
+          <select
+            value={transferTo}
+            onChange={(event) => setTransferTo(event.target.value)}
+            className="mt-1 w-full rounded-xl border border-white/20 bg-[#0a2450] px-3 py-2 text-sm font-normal text-white focus:outline-none"
+          >
+            <option value="">
+              Back to their clinic, for whoever works there
+            </option>
+
+            {colleagues.map((doctor) => (
+              <option key={doctor.id} value={doctor.id}>
+                {doctor.fullName}
+                {doctor.specialty ? ` — ${doctor.specialty}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
 
         <input
           value={reason}
@@ -144,7 +210,7 @@ export default function DoctorAccessButton({
       ) : (
         <button
           type="button"
-          onClick={() => setConfirming(true)}
+          onClick={() => void openConfirm()}
           className="rounded-xl border border-rose-300/30 bg-rose-500/10 px-4 py-2 text-xs font-bold text-rose-100 transition hover:bg-rose-500/20"
         >
           Withdraw access
